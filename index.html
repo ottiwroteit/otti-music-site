@@ -792,9 +792,18 @@ function spawnArc(a,b){
   mesh.userData={t:0};
   globeGrp.add(mesh);arcPool.push(mesh);
   if(arcPool.length>ARC_N){const old=arcPool.shift();globeGrp.remove(old);old.geometry.dispose();}
-  globe.rotation.y+=0.04;  // stream event kicks the globe
+  globe.rotation.y+=0.04;  // flash event kicks the globe
 }
-txListeners.push(spawnArc);
+// globe flashes on a 4s cadence (arc + emissive pulse), NOT on every fast counter tick
+function randomTxPair(){
+  const a=CITIES[Math.random()*CITIES.length|0]; let b=CITIES[Math.random()*CITIES.length|0];
+  if(b===a)b=CITIES[(CITIES.indexOf(a)+3)%CITIES.length];
+  return [a,b];
+}
+let globeFlash=0, globeFlashTimer=0;
+const GLOBE_FLASH_EVERY=4;  // seconds
+window._globeDbg=()=>({flash:+globeFlash.toFixed(2),timer:+globeFlashTimer.toFixed(2),emissive:+globe.material.emissiveIntensity.toFixed(3),arcs:arcPool.length});
+window._advanceGlobeTimer=(s)=>{globeFlashTimer+=s;};  // test hook
 window._arcPool=arcPool;
 
 /* ================================================================
@@ -996,6 +1005,7 @@ const PROP_LIST=[
   ['pedal',     deskLG, -.95, TOP, -.1,  .18, -0.2, 0],
   ['mic',       deskRG,  .15, TOP, -.42, .34,  0.2, 0],
   ['speaker',   deskRG, -1.15,TOP, -.35, .38,  0.5, 0],
+  ['speaker',   deskRG,  1.15,TOP, -.35, .38, -0.5, 0],   // mirrored on the right edge
   ['headphones',deskRG, -.75, TOP,  .3,  .28,  0.9, 0],
 ];
 window._propsLoaded=[];
@@ -1126,6 +1136,12 @@ function loopBody(){
   // globe + arcs
   globe.rotation.y+=dt*0.25;
   halo.rotation.y=globe.rotation.y;
+  // deliberate flash every GLOBE_FLASH_EVERY seconds: fresh arc + emissive pulse
+  globeFlashTimer+=dt;
+  if(globeFlashTimer>=GLOBE_FLASH_EVERY){globeFlashTimer=0;globeFlash=1;spawnArc(...randomTxPair());}
+  globeFlash=Math.max(0,globeFlash-dt/0.6);
+  globe.material.emissiveIntensity=0.15+globeFlash*0.6;
+  halo.material.opacity=0.14+globeFlash*0.32;
   for(const a of arcPool){
     a.userData.t+=dt*1.1;
     a.rotation.y=globe.rotation.y;
@@ -1165,7 +1181,8 @@ if(location.hash==='#selftest'){
   game.state='playing';game.balls=3;drain();A(game.balls===2,'drain');
   game.balls=1;drain();A(game.state==='over','game over');
   startGame();A(game.state==='playing'&&game.score===0&&game.balls===3,'reset');
-  const n0=arcPool.length;fireTx();A(arcPool.length===Math.min(n0+1,26),'arc spawn');
+  const n0=arcPool.length;spawnArc(...randomTxPair());A(arcPool.length===Math.min(n0+1,26),'arc spawn');
+  const f0=stats.fans;fireTx();A(stats.fans>f0,'tx updates counters');
   console.log('SELFTEST OK');
 }
 </script>
