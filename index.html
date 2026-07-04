@@ -271,7 +271,7 @@ frameCamera();
 
 /* ---- camera choreography: wide / table / globe states, damped fly-to ---- */
 const CAMS={
-  wide: {pos:[0.3,3.5,4.9], look:[0,0.65,-0.5], fov:46, ppos:[0,3.7,5.3], plook:[0,0.85,-0.5], pfov:62},
+  wide: {pos:[0.3,3.4,5.15], look:[0,0.22,-0.42], fov:47, ppos:[0,3.55,5.7], plook:[0,0.46,-0.42], pfov:63},
   table:{pos:[0.15,3.0,3.15],look:[0,0.0,-0.3], fov:46, ppos:[0,3.25,3.5],plook:[0,-0.05,-0.3],pfov:60},
 };
 let camState='wide';
@@ -1032,6 +1032,7 @@ const PROP_LIST=[
   ['speaker',   deskRG, -1.15,TOP, -.35, .38,  0.5, 0],
   ['speaker',   deskRG,  1.15,TOP, -.35, .38, -0.5, 0],   // mirrored on the right edge
   ['headphones',deskRG, -.75, TOP,  .3,  .28,  0.9, 0],
+  ['panther',   scene, -1.85, floor.position.y, 1.45, 1.0, 0.55, 0],  // ~3ft floor statue, front-left of the machine
 ];
 window._propsLoaded=[];
 PROP_LIST.forEach(([name,parent,x,y,z,size,ry,rx])=>{
@@ -1042,6 +1043,7 @@ PROP_LIST.forEach(([name,parent,x,y,z,size,ry,rx])=>{
       c.material.emissiveIntensity=0;          // generated GLBs sometimes ship hot emissives
       c.material.envMapIntensity=0.3;
       if(name==='speaker'||name==='mic')c.material.color.multiplyScalar(0.6); // sit under the key light
+      if(name==='panther'){c.material.envMapIntensity=1.0;c.material.roughness=Math.min(c.material.roughness??.6,.45);} // black figure catches the neon rim light
       window._propsLoaded.push(name+':'+(c.material.map?'tex':'NOTEX'));
     }});
     o.rotation.set(rx||0,ry,0);                 // orient FIRST, then ground on the surface
@@ -1049,6 +1051,28 @@ PROP_LIST.forEach(([name,parent,x,y,z,size,ry,rx])=>{
     bb.setFromObject(o);
     o.position.set(x,y-bb.min.y,z);
     parent.add(o);
+  },undefined,()=>{});
+});
+
+/* AI-generated floor rugs (assets/rugs/*.png, die-cut alpha) — flat on the floor for depth */
+const rugTexL=new THREE.TextureLoader();
+const rugMats=[];   // collected for the animated shimmer in the main loop
+const RUG_LIST=[
+  // [file, x, z, width(world units), rotZ]
+  ['skater', 0.35, 1.5, 1.4, 0.18],
+];
+RUG_LIST.forEach(([name,x,z,w,rz])=>{
+  rugTexL.load(`assets/rugs/${name}.png`,tex=>{
+    tex.colorSpace=THREE.SRGBColorSpace;tex.anisotropy=8;
+    const ar=tex.image.height/tex.image.width;             // portrait cutouts
+    const m=new THREE.MeshStandardMaterial({map:tex,transparent:true,alphaTest:0.5,
+      roughness:.95,emissive:0xffffff,emissiveMap:tex,emissiveIntensity:0.3,side:THREE.DoubleSide});
+    const rug=new THREE.Mesh(new THREE.PlaneGeometry(w,w*ar),m);
+    rug.rotation.set(-Math.PI/2,0,rz);                      // lay flat, spin in the floor plane
+    rug.position.set(x,floor.position.y+0.012,z);          // hover just above the floor (no z-fight)
+    scene.add(rug);
+    rugMats.push(m);
+    window._rugsLoaded=(window._rugsLoaded||[]);window._rugsLoaded.push(name);
   },undefined,()=>{});
 });
 
@@ -1093,6 +1117,9 @@ function loop(){
 window.__step=()=>loopBody();   // manual frame driver (headless verification)
 function loopBody(){
   const dt=Math.min(clock3.getDelta(),0.033);
+
+  // animated rugs — gentle emissive shimmer so they feel alive
+  if(rugMats.length){const et=clock3.elapsedTime;for(let i=0;i<rugMats.length;i++)rugMats[i].emissiveIntensity=0.26+0.12*Math.sin(et*1.4+i*1.7);}
 
   // attract mode — auto launch/respawn only; flippers move ONLY on user input
   game._aw-=dt;
