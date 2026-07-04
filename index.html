@@ -509,38 +509,10 @@ function drawTelemetry(){
   tmTex.needsUpdate=true;
 }
 /* ---- Y2K OS monitor preview (wide-zoom stand-in; the real app loads on click) ---- */
-const [emC,em]=makeCanvas(640,400);
-(function(){ // mini Y2K desktop, drawn once
-  em.fillStyle='#3d8b8b';em.fillRect(0,0,640,400);                    // teal desktop
-  const win=(x,y,w,h,title)=>{
-    em.fillStyle='#c9d3d6';em.fillRect(x,y,w,h);
-    em.strokeStyle='#7a8a8f';em.strokeRect(x,y,w,h);
-    em.fillStyle='#1b3fa0';em.fillRect(x+3,y+3,w-6,16);
-    em.fillStyle='#fff';em.font='bold 11px monospace';em.fillText(title,x+7,y+15);
-    em.fillStyle='#eef4f5';em.fillRect(x+5,y+23,w-10,h-30);
-  };
-  win(60,50,240,160,'My Computer');
-  win(150,120,230,150,'readme.txt - Notepad');
-  em.fillStyle='#333';em.font='9px monospace';
-  ['Version 2.0.0 Release Notes','----------------','Welcome to the Y2K OS','[ ] Fix Y2K bug'].forEach((l,i)=>em.fillText(l,162,152+i*13));
-  win(420,60,180,200,'Media Player');
-  em.fillStyle='#001a00';em.fillRect(428,90,164,60);                  // visualizer
-  em.fillStyle='#3cff5e';
-  for(let i=0;i<12;i++)em.fillRect(432+i*13,146-Math.random()*48,9,Math.random()*48+4);
-  // desktop icons
-  em.font='9px monospace';
-  ['My Computer','Documents','Internet','Recycle Bin','AIM'].forEach((t,i)=>{
-    em.fillStyle=['#7ab8ff','#ffd97a','#7affc8','#d9d9d9','#ffb2e6'][i];
-    em.fillRect(14,20+i*62,26,22);
-    em.fillStyle='#fff';em.fillText(t,8,56+i*62);
-  });
-  // taskbar
-  em.fillStyle='#c9d3d6';em.fillRect(0,378,640,22);
-  em.fillStyle='#9aa8ad';em.fillRect(4,381,52,16);
-  em.fillStyle='#111';em.font='bold 11px monospace';em.fillText('Start',12,393);
-  em.fillText('7:08 PM',586,393);
-})();
-const emTex=ctex(emC);
+// Real screenshot of the running Y2K OS (assets/y2k-os-preview.png) so wide zoom
+// matches what you get on click. Dimmed under the bloom knee by the 0.72 screen color.
+const emTex=new THREE.TextureLoader().load('assets/y2k-os-preview.png');
+emTex.colorSpace=THREE.SRGBColorSpace;emTex.anisotropy=4;
 
 /* ---- pegboard wall (left) — generated photo texture (assets/pegboard.png) ---- */
 const pbTex=new THREE.TextureLoader().load('assets/pegboard.png');
