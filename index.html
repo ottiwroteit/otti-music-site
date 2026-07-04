@@ -43,6 +43,16 @@
     letter-spacing:.06em;color:#a99ec6;text-shadow:0 1px 4px #000;pointer-events:none}
   .hint kbd{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:4px;
     padding:0 5px;color:#fff}
+  #daynight{position:fixed;top:54px;right:18px;z-index:11;display:flex;align-items:center;gap:7px;
+    background:rgba(6,3,9,.55);border:1px solid rgba(255,255,255,.12);border-radius:999px;padding:5px 10px;
+    backdrop-filter:blur(6px);cursor:pointer;font-size:13px;line-height:1}
+  #daynight .dn-sun{color:#ffd27a}#daynight .dn-moon{color:#9fb4ff;opacity:.5}
+  #daynight.night .dn-sun{opacity:.5}#daynight.night .dn-moon{opacity:1}
+  #daynight .dn-track{position:relative;width:30px;height:15px;border-radius:999px;
+    background:linear-gradient(90deg,#c9772e,#3a2a5a);border:1px solid rgba(255,255,255,.15)}
+  #daynight .dn-knob{position:absolute;top:1px;left:1px;width:11px;height:11px;border-radius:50%;
+    background:var(--neon-green);box-shadow:0 0 8px rgba(141,255,26,.7);transition:left .55s cubic-bezier(.4,1.2,.5,1)}
+  #daynight.night .dn-knob{left:16px}
 
   #playbtn{position:fixed;left:50%;bottom:46px;transform:translateX(-50%);z-index:11;
     font-family:'Bungee',sans-serif;font-size:15px;color:#08110a;background:var(--neon-green);
@@ -70,6 +80,7 @@
   <div class="livepill"><span class="brand">OTTI<b>.</b></span><span id="clock">—</span><span class="live">LIVE</span></div>
   <button class="cta">EARLY ACCESS</button>
 </header>
+<button id="daynight" class="night" aria-label="Toggle sunrise and sunset view"><span class="dn-sun">&#9728;</span><span class="dn-track"><span class="dn-knob"></span></span><span class="dn-moon">&#9790;</span></button>
 
 <button id="playbtn">PLAY</button>
 <button id="backchip">Go Back <kbd>ESC</kbd></button>
@@ -1022,6 +1033,38 @@ function paper(parent,x,y,z,rx,rz,s=.22){
 paper(deskLG,.15,TOP+.008,.42,-Math.PI/2,.4);
 paper(deskRG,-.95,TOP+.008,.3,-Math.PI/2,-.25);
 
+/* ================================================================
+   DOWNTOWN WINDOW — photoreal skyline behind the right-desk monitors.
+   Sunrise/sunset crossfade + depth-parallax shader: reads like a real
+   view (splat-like depth), NOT a procedural three.js city.
+   ================================================================ */
+const skyTexL=new THREE.TextureLoader();
+const skySunset=skyTexL.load('assets/window/skyline-sunset.png');
+const skySunrise=skyTexL.load('assets/window/skyline-sunrise.png');
+[skySunset,skySunrise].forEach(t=>{t.colorSpace=THREE.SRGBColorSpace;t.anisotropy=8;});
+const skyU={uSunset:{value:skySunset},uSunrise:{value:skySunrise},uMix:{value:1},uPar:{value:new THREE.Vector2()},uDim:{value:0.95}};
+const skyMat=new THREE.ShaderMaterial({uniforms:skyU,toneMapped:false,
+  vertexShader:'varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+  fragmentShader:'varying vec2 vUv;uniform sampler2D uSunset,uSunrise;uniform float uMix,uDim;uniform vec2 uPar;'+
+    'void main(){float near=1.0-vUv.y;vec2 uv=clamp(vUv+uPar*(0.12+0.88*near),0.001,0.999);'+
+    'vec3 c=mix(texture2D(uSunrise,uv).rgb,texture2D(uSunset,uv).rgb,uMix);gl_FragColor=vec4(c*uDim,1.0);}'});
+const WIN_W=3.7,WIN_H=2.8;
+const winGrp=new THREE.Group();winGrp.position.set(3.15,1.95,-2.86);scene.add(winGrp);
+winGrp.add(new THREE.Mesh(new THREE.PlaneGeometry(WIN_W,WIN_H),skyMat));
+const winFrameM=new THREE.MeshStandardMaterial({color:0x08070d,roughness:.5,metalness:.4});
+const winBar=(w,h,x,y)=>{const b=new THREE.Mesh(new THREE.BoxGeometry(w,h,0.05),winFrameM);b.position.set(x,y,0.03);winGrp.add(b);};
+const bt=0.055;
+winBar(WIN_W+bt*2,bt,0,WIN_H/2);winBar(WIN_W+bt*2,bt,0,-WIN_H/2);          // frame top/bottom
+winBar(bt,WIN_H+bt*2,-WIN_W/2,0);winBar(bt,WIN_H+bt*2,WIN_W/2,0);          // frame left/right
+winBar(bt*0.7,WIN_H,-WIN_W/6,0);winBar(bt*0.7,WIN_H,WIN_W/6,0);winBar(WIN_W,bt*0.7,0,0); // mullions
+const winGlass=new THREE.Mesh(new THREE.PlaneGeometry(WIN_W,WIN_H),
+  new THREE.MeshBasicMaterial({color:0x2a3550,transparent:true,opacity:0.05,depthWrite:false}));
+winGlass.position.z=0.045;winGrp.add(winGlass);
+// day/night toggle -> crossfade sunrise(0) <-> sunset(1)
+let skyTarget=1,skyMix=1;
+const dnEl=document.getElementById('daynight');
+if(dnEl)dnEl.addEventListener('click',()=>{skyTarget=skyTarget<0.5?1:0;dnEl.classList.toggle('night',skyTarget>0.5);});
+
 /* AI-generated music props (assets/props/*.glb) — missing file = silently skipped */
 const gltfL=new GLTFLoader();
 const PROP_LIST=[
@@ -1120,6 +1163,10 @@ function loopBody(){
 
   // animated rugs — gentle emissive shimmer so they feel alive
   if(rugMats.length){const et=clock3.elapsedTime;for(let i=0;i<rugMats.length;i++)rugMats[i].emissiveIntensity=0.26+0.12*Math.sin(et*1.4+i*1.7);}
+
+  // downtown window — mouse parallax (splat-like depth) + sunrise/sunset crossfade
+  skyU.uPar.value.set(mx*0.03,my*0.018);
+  skyMix+=(skyTarget-skyMix)*0.05;skyU.uMix.value=skyMix;
 
   // attract mode — auto launch/respawn only; flippers move ONLY on user input
   game._aw-=dt;
