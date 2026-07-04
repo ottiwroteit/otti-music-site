@@ -1,0 +1,8 @@
+# Raw Figma Make export (396MB) — only the built assets/y2k-os/ dist ships
+y2k-os-src/
+# Reference screen recording (43MB)
+*.mov
+# Working docs + tooling — not part of the site
+docs/
+.claude/
+node_modules/
