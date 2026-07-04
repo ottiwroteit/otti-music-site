@@ -52,6 +52,11 @@
     backdrop-filter:blur(4px);letter-spacing:.04em}
   #backchip.show{display:block}
   #backchip kbd{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:0 5px}
+  /* live web app on the earth-horizon monitor — positioned over its projected screen rect */
+  #screenframe{position:fixed;z-index:9;border:0;background:#000;opacity:0;pointer-events:none;
+    transition:opacity .25s ease;box-shadow:0 0 40px rgba(0,0,0,.6)}
+  #screenframe.show{opacity:1;pointer-events:auto}
+  body.in-screen #playbtn,body.in-screen .hint{display:none}
   @media (max-width:520px){ .livepill{font-size:9px;padding:5px 9px;gap:5px} .livepill .brand{font-size:10px} .cta{font-size:10px;padding:8px 11px} }
 </style>
 </head>
@@ -65,6 +70,7 @@
 
 <button id="playbtn">PLAY</button>
 <button id="backchip">Go Back <kbd>ESC</kbd></button>
+<iframe id="screenframe" title="Y2K Desktop OS" loading="lazy"></iframe>
 <div class="hint"><kbd>&larr;</kbd><kbd>&rarr;</kbd> flippers · <kbd>Space</kbd> launch · mobile: tap sides</div>
 
 <script>
@@ -110,7 +116,8 @@ Composite.add(world, statics);
 
 function makeFlipper(px,py,dir){
   const len=72,h=20;   // tips leave a ~32px center gap — ball (22px) drains clean, no tip-wedge
-  const f=Bodies.rectangle(px+dir*len/2,py,len,h,{density:.02,restitution:.2,friction:.1,collisionFilter:{group:-1}});
+  const f=Bodies.rectangle(px+dir*len/2,py,len,h,{density:.02,restitution:.2,friction:.1,
+    collisionFilter:{category:0x0004,mask:0x0002}}); // flippers touch ONLY the ball — never rest on scenery
   Composite.add(world,[f,Constraint.create({pointA:{x:px,y:py},bodyB:f,pointB:{x:-dir*len/2,y:0},stiffness:1,length:0})]);
   const rest=dir>0?0.28:-0.28, up=dir>0?-0.5:0.5;
   Body.setAngle(f,rest);
@@ -135,7 +142,8 @@ function driveFlipper(f){
 let ball2d=null;
 function spawnBall(){
   if(ball2d)Composite.remove(world,ball2d);
-  ball2d=Bodies.circle(laneX+11,PH-90,11,{restitution:.35,friction:.005,density:.02});
+  ball2d=Bodies.circle(laneX+11,PH-90,11,{restitution:.35,friction:.005,density:.02,
+    collisionFilter:{category:0x0002}});
   Composite.add(world,ball2d); game.launched=false; game.charge=0;
 }
 function launchBall(p){if(!ball2d||game.launched)return;Body.setVelocity(ball2d,{x:0,y:-p});game.launched=true;ledFlash('GAME START');}
@@ -212,6 +220,7 @@ addEventListener('keyup',e=>{
   if(e.key===' '&&game.charging){launchBall(18+game.charge*0.10);game.charging=false;game.charge=0;}
 });
 addEventListener('pointerdown',e=>{
+  if(window.__inScreen)return;              // focused on the Y2K monitor — no pinball input
   if(e.target.closest('button,header'))return;
   if(game.state!=='playing')return;
   if(!game.launched){launchBall(24);return;}
@@ -265,6 +274,7 @@ const CAMS={
 let camState='wide';
 const camCur={pos:new THREE.Vector3(),look:new THREE.Vector3(),fov:46};
 const _gw=new THREE.Vector3();
+const _sq=new THREE.Quaternion(),_sn=new THREE.Vector3();
 function camTarget(){
   const portrait=innerHeight>innerWidth;
   if(camState==='globe'){
@@ -272,19 +282,36 @@ function camTarget(){
     return {pos:_gw.clone().add(new THREE.Vector3(portrait?0.12:0.55,0.3,portrait?1.5:1.1)),
             look:_gw.clone().add(new THREE.Vector3(0,0.03,0)),fov:portrait?56:42};
   }
+  if(camState==='screen'){ // head-on at the Y2K OS monitor, along its normal
+    emScreen.getWorldPosition(_gw);
+    emScreen.getWorldQuaternion(_sq);
+    _sn.set(0,0,1).applyQuaternion(_sq);
+    const dist=portrait?2.7:1.35, fov=portrait?62:40;
+    return {pos:_gw.clone().addScaledVector(_sn,dist),look:_gw.clone(),fov};
+  }
   const c=CAMS[camState];
   return portrait
     ? {pos:new THREE.Vector3(...c.ppos),look:new THREE.Vector3(...c.plook),fov:c.pfov}
     : {pos:new THREE.Vector3(...c.pos), look:new THREE.Vector3(...c.look), fov:c.fov};
 }
 const backchip=document.getElementById('backchip');
-function setCam(s){camState=s;backchip.classList.toggle('show',s==='globe');}
-backchip.addEventListener('click',()=>setCam('table'));
-addEventListener('keydown',e=>{if(e.key==='Escape'&&camState==='globe')setCam('table');});
+const screenframe=document.getElementById('screenframe');
+function setCam(s){
+  camState=s;
+  backchip.classList.toggle('show',s==='globe'||s==='screen');
+  window.__inScreen=s==='screen';           // pinball input guard (classic script reads this)
+  document.body.classList.toggle('in-screen',s==='screen');
+  if(s==='screen'){ if(!screenframe.src)screenframe.src='assets/y2k-os/index.html'; }
+  else screenframe.classList.remove('show');
+}
+backchip.addEventListener('click',()=>setCam(camState==='screen'?'wide':'table'));
+window._setCam=setCam;
+addEventListener('keydown',e=>{if(e.key==='Escape'&&(camState==='globe'||camState==='screen'))setCam(camState==='screen'?'wide':'table');});
 const CAM_ORDER=['wide','table','globe'];
 let wheelLock=0;
 addEventListener('wheel',e=>{
   const now=performance.now(); if(now-wheelLock<700)return; wheelLock=now;
+  if(camState==='screen'){setCam('wide');return;}   // wheel backs out of the monitor
   const i=CAM_ORDER.indexOf(camState);
   if(e.deltaY>0&&i<2)setCam(CAM_ORDER[i+1]);
   else if(e.deltaY<0&&i>0)setCam(CAM_ORDER[i-1]);
@@ -481,18 +508,37 @@ function drawTelemetry(){
   logLines.forEach((l,i)=>{tm.fillStyle=i%3?'#4fd08a':'#a2f5c8';tm.fillText(l,32,520+i*17);});
   tmTex.needsUpdate=true;
 }
-/* ---- earth monitor (static-ish horizon shot) ---- */
+/* ---- Y2K OS monitor preview (wide-zoom stand-in; the real app loads on click) ---- */
 const [emC,em]=makeCanvas(640,400);
-(function(){ // draw once
-  const g=em.createLinearGradient(0,0,0,400);
-  g.addColorStop(0,'#000006');g.addColorStop(1,'#02050c');
-  em.fillStyle=g;em.fillRect(0,0,640,400);
-  em.fillStyle='#fff';for(let i=0;i<80;i++){em.globalAlpha=Math.random()*.8;em.fillRect(Math.random()*640,Math.random()*260,1.5,1.5);}
-  em.globalAlpha=1;
-  em.save();em.translate(320,700);
-  em.fillStyle='#0a2b4d';em.beginPath();em.arc(0,0,430,0,7);em.fill();
-  em.strokeStyle='#4db8ff';em.lineWidth=8;em.shadowColor='#4db8ff';em.shadowBlur=30;
-  em.beginPath();em.arc(0,0,430,Math.PI*1.15,Math.PI*1.85);em.stroke();em.restore();
+(function(){ // mini Y2K desktop, drawn once
+  em.fillStyle='#3d8b8b';em.fillRect(0,0,640,400);                    // teal desktop
+  const win=(x,y,w,h,title)=>{
+    em.fillStyle='#c9d3d6';em.fillRect(x,y,w,h);
+    em.strokeStyle='#7a8a8f';em.strokeRect(x,y,w,h);
+    em.fillStyle='#1b3fa0';em.fillRect(x+3,y+3,w-6,16);
+    em.fillStyle='#fff';em.font='bold 11px monospace';em.fillText(title,x+7,y+15);
+    em.fillStyle='#eef4f5';em.fillRect(x+5,y+23,w-10,h-30);
+  };
+  win(60,50,240,160,'My Computer');
+  win(150,120,230,150,'readme.txt - Notepad');
+  em.fillStyle='#333';em.font='9px monospace';
+  ['Version 2.0.0 Release Notes','----------------','Welcome to the Y2K OS','[ ] Fix Y2K bug'].forEach((l,i)=>em.fillText(l,162,152+i*13));
+  win(420,60,180,200,'Media Player');
+  em.fillStyle='#001a00';em.fillRect(428,90,164,60);                  // visualizer
+  em.fillStyle='#3cff5e';
+  for(let i=0;i<12;i++)em.fillRect(432+i*13,146-Math.random()*48,9,Math.random()*48+4);
+  // desktop icons
+  em.font='9px monospace';
+  ['My Computer','Documents','Internet','Recycle Bin','AIM'].forEach((t,i)=>{
+    em.fillStyle=['#7ab8ff','#ffd97a','#7affc8','#d9d9d9','#ffb2e6'][i];
+    em.fillRect(14,20+i*62,26,22);
+    em.fillStyle='#fff';em.fillText(t,8,56+i*62);
+  });
+  // taskbar
+  em.fillStyle='#c9d3d6';em.fillRect(0,378,640,22);
+  em.fillStyle='#9aa8ad';em.fillRect(4,381,52,16);
+  em.fillStyle='#111';em.font='bold 11px monospace';em.fillText('Start',12,393);
+  em.fillText('7:08 PM',586,393);
 })();
 const emTex=ctex(emC);
 
@@ -752,13 +798,14 @@ globe.position.y=.16+globeR;globeGrp.add(globe);
 const halo=new THREE.Mesh(new THREE.SphereGeometry(globeR*1.06,32,22),
   new THREE.MeshBasicMaterial({color:0x66c0ff,transparent:true,opacity:.14,side:THREE.BackSide,toneMapped:false}));
 halo.position.copy(globe.position);globeGrp.add(halo);
-// click the globe -> camera dives to it (like the reference's globe close-up)
+// click the globe -> globe close-up; click the Y2K monitor -> screen focus
 const gRay=new THREE.Raycaster(),gPv=new THREE.Vector2();
 addEventListener('pointerdown',e=>{
-  if(camState==='globe'||e.target.closest('button,header'))return;
+  if(camState==='globe'||camState==='screen'||e.target.closest('button,header,iframe'))return;
   gPv.set(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1);
   gRay.setFromCamera(gPv,camera);
-  if(gRay.intersectObject(globe,false).length)setCam('globe');
+  if(gRay.intersectObject(globe,false).length){setCam('globe');return;}
+  if(gRay.intersectObject(emScreen,false).length)setCam('screen');
 });
 
 // city blocks w/ LED windows around pedestal
@@ -962,7 +1009,10 @@ function monitor(parent,tex,w,h,x,y,z,ry){
   foot.position.set(0,-h/2-.44,0);g.add(foot);
   g.position.set(x,y,z);g.rotation.y=ry;parent.add(g);return g;
 }
-monitor(deskRG,emTex,1.55,.95,-.55,TOP+.925,-.35,-0.05);  // earth horizon
+const emMon=monitor(deskRG,emTex,1.55,.95,-.55,TOP+.925,-.35,-0.05);  // earth horizon -> Y2K OS screen
+const emScreen=emMon.children[1];   // the PlaneGeometry screen mesh
+emScreen.material.color.setScalar(0.72); // keep the pale OS chrome under the bloom knee
+window._emScreen=emScreen;
 monitor(deskRG,tmTex,1.1,1.35,.72,TOP+1.125,-.22,-0.28);  // telemetry
 // keyboard with green key rows + mouse
 const kb=new THREE.Mesh(new THREE.BoxGeometry(.85,.035,.28),
@@ -1055,6 +1105,7 @@ document.fonts.ready.then(()=>{drawPlayfield();drawBackglass();});
    MAIN LOOP — physics + sync + textures + render
    ================================================================ */
 window.rinfo=renderer.info;  // diagnostics
+window._camera=camera;
 window._dbg=()=>({state:camState,camPos:camera.position.toArray().map(v=>+v.toFixed(2)),
   target:camTarget().pos.toArray().map(v=>+v.toFixed(2)),
   earthLoaded:earthImg.complete&&earthImg.naturalWidth>0});
@@ -1075,10 +1126,13 @@ function loopBody(){
     else if(!game.launched&&game._aw<=0){launchBall(22+Math.random()*4);}
   }
 
-  // physics
-  driveFlipper(leftFlip);driveFlipper(rightFlip);
+  // physics — flipper spring recomputed EVERY substep (once-per-frame + multi
+  // substep double-applies the velocity -> overshoot -> flippers flap on their own)
   if(game.charging&&game.charge<100)game.charge+=130*dt;
-  for(let ms=dt*1000;ms>0;ms-=1000/60)Engine.update(engine,Math.min(1000/60,ms)); // substep — stable at low fps
+  for(let ms=dt*1000;ms>0;ms-=1000/60){
+    driveFlipper(leftFlip);driveFlipper(rightFlip);
+    Engine.update(engine,Math.min(1000/60,ms));
+  }
   if(game.state==='playing'&&game.launched&&ball2d&&ball2d.position.y>PH+30){game.launched=false;drain();}
   // weak plunge: ball settles back in the lane -> allow re-launch
   if(ball2d&&game.launched&&ball2d.position.x>laneX-11&&ball2d.position.y>PH-200&&ball2d.speed<0.3){
@@ -1166,6 +1220,22 @@ function loopBody(){
     camCur.pos.z+Math.cos(ft*0.33)*0.04);
   camera.fov=camCur.fov; camera.updateProjectionMatrix();
   camera.lookAt(camCur.look);
+
+  // Y2K monitor: glue the live iframe to the projected screen rect
+  if(camState==='screen'){
+    let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
+    for(let i=0;i<4;i++){
+      _sn.set(i%2?0.775:-0.775, i<2?0.475:-0.475, 0);   // screen is 1.55 x 0.95
+      emScreen.localToWorld(_sn); _sn.project(camera);
+      const sx=(_sn.x+1)/2*innerWidth, sy=(1-_sn.y)/2*innerHeight;
+      if(sx<minX)minX=sx; if(sx>maxX)maxX=sx;
+      if(sy<minY)minY=sy; if(sy>maxY)maxY=sy;
+    }
+    const st=screenframe.style;
+    st.left=minX+'px'; st.top=minY+'px';
+    st.width=(maxX-minX)+'px'; st.height=(maxY-minY)+'px';
+    if(camCur.pos.distanceTo(ct.pos)<0.09)screenframe.classList.add('show');
+  }
 
   composer.render();
 }
