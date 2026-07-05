@@ -299,7 +299,7 @@ function songId(){const h=(location.hash||'').replace('#','');return SONGS[h]?h:
 /* ================= audio engine (shared across songs) ================= */
 let ctx=null,bus=null,revWet=null,echoWet=null;
 const bufs={};                 // decoded buffers by file path
-let stemGain={},stemOn={};     // otti synced stems
+let stemGain={},stemOn={},stemSrc={};   // otti synced stems (src kept so we can free them on teardown)
 let loopSrc={},loopOn={};      // independent loop pads (power clap/drums, runaway beat)
 let loaded=false,loading=false,queue=[];
 let song=null,els={},byKey={};
@@ -325,11 +325,21 @@ function initCtx(){
 }
 function stopAll(){
   if(!ctx)return;
+  if(revWet)revWet.gain.setTargetAtTime(0,ctx.currentTime,0.05);   // drop any held reverb/echo
+  if(echoWet)echoWet.gain.setTargetAtTime(0,ctx.currentTime,0.05);
+  Object.keys(els).forEach(k=>els[k]&&els[k].classList.remove('held'));
   Object.keys(stemGain).forEach(k=>{stemGain[k].gain.setTargetAtTime(0,ctx.currentTime,0.02);stemOn[k]=false;
     els[k]&&els[k].classList.remove('looping');});
   Object.keys(loopSrc).forEach(k=>{try{loopSrc[k].stop();}catch(_){}delete loopSrc[k];loopOn[k]=false;
     els[k]&&els[k].classList.remove('looping');});
 }
+// hard teardown: actually stop + free the always-on stem sources (stopAll only mutes them so
+// they stay re-playable). Called on song rebuild so switching machines never leaks looping sources.
+function teardownStems(){
+  Object.keys(stemSrc).forEach(k=>{try{stemSrc[k].stop();stemSrc[k].disconnect();}catch(_){}});
+  stemSrc={};
+}
+window.__mpcStop=stopAll;        // parent scene calls this when the camera leaves the MPC
 async function loadAll(){
   if(loading||loaded)return;loading=true;
   stat.textContent='LOADING…';
@@ -346,7 +356,7 @@ async function loadAll(){
       const src=ctx.createBufferSource();src.buffer=bufs[p.file];src.loop=true;
       const g=ctx.createGain();g.gain.value=0;
       src.connect(g);g.connect(bus);src.start(t0);
-      stemGain[p.key]=g;stemOn[p.key]=false;
+      stemGain[p.key]=g;stemOn[p.key]=false;stemSrc[p.key]=src;
     });
   }
   loaded=true;loading=false;stat.textContent='READY';
@@ -388,7 +398,7 @@ function release(p){
 /* ================= build / rebuild UI for the selected song ================= */
 function build(){
   song=SONGS[songId()];
-  stopAll();loaded=false;loading=false;queue=[];stemGain={};stemOn={};
+  stopAll();teardownStems();loaded=false;loading=false;queue=[];stemGain={};stemOn={};
   document.body.className=song.theme;
   const [a,b,c]=song.lcd;
   document.getElementById('lcd1').textContent=a;

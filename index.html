@@ -335,7 +335,9 @@ function setCam(s){
     if(!mpcframe.src)mpcframe.src=want;
     else try{mpcframe.contentWindow.location.hash=curMpc.song;}catch(_){mpcframe.src=want;}
   }
-  else mpcframe.classList.remove('show');
+  else{ mpcframe.classList.remove('show');   // left the MPC -> silence it (audio would keep playing over the room otherwise)
+    try{mpcframe.contentWindow&&mpcframe.contentWindow.__mpcStop&&mpcframe.contentWindow.__mpcStop();}catch(_){}
+  }
 }
 backchip.addEventListener('click',()=>setCam(camState==='globe'?'table':'wide'));
 window._setCam=setCam;
@@ -930,22 +932,11 @@ const deskLG=desk(-3.05,0.25,0.38,2.7,1.35);
 const deskRG=desk(2.95,0.0,-0.55,2.9,1.45);
 const TOP=-0.215;   // desk top surface (local y)
 
-/* left desk: pegboard wall, lamp, cutting mat, calculator, tools, bins */
+/* left desk: pegboard wall, lava lamp, MPC lineup, floor bins */
 const peg=new THREE.Mesh(new THREE.PlaneGeometry(2.3,2.5),
   new THREE.MeshStandardMaterial({map:pbTex,roughness:1,
     emissive:0xffffff,emissiveMap:pbTex,emissiveIntensity:.22})); // lighting is baked into the photo
 peg.position.set(-3.45,1.2,-1.55);peg.rotation.y=0.38;scene.add(peg);
-// cutting mat — dark grid like the reference
-const [cmC,cm]=makeCanvas(256,180);
-cm.fillStyle='#141419';cm.fillRect(0,0,256,180);
-cm.strokeStyle='#2e3138';cm.lineWidth=1;
-for(let x=0;x<=256;x+=24){cm.beginPath();cm.moveTo(x,0);cm.lineTo(x,180);cm.stroke();}
-for(let y=0;y<=180;y+=24){cm.beginPath();cm.moveTo(0,y);cm.lineTo(256,y);cm.stroke();}
-cm.strokeStyle='#4a4f5a';cm.strokeRect(12,12,232,156);
-const mat=new THREE.Mesh(new THREE.BoxGeometry(1.05,.012,.72),
-  new THREE.MeshStandardMaterial({map:ctex(cmC),roughness:.9}));
-mat.position.set(-.35,TOP+.006,.18);deskLG.add(mat);
-
 // The MPC lineup: three Higgsfield GLBs loaded via PROP_LIST (assets/props/mpc-*.glb),
 // each clickable -> camera dives to it and the playable app opens on that machine's song.
 // Each unit gets an invisible panel (fly-in target) built after its GLB grounds — see the loader.
@@ -971,14 +962,6 @@ lava.add((()=>{const c=new THREE.Mesh(new THREE.CylinderGeometry(.012,.03,.06,16
 const lavaLight=new THREE.PointLight(0xff4ac0,3.5,1.8);
 lavaLight.position.set(0,.28,0);lava.add(lavaLight);
 window._lavaBlobs=lavaBlobs;
-// drumsticks on the mat
-const stickM=new THREE.MeshStandardMaterial({color:0xc9a066,roughness:.55});
-[[-.55,.12,.35],[-.3,.3,.18]].forEach(([x,z,ry])=>{
-  const t=new THREE.Group();t.position.set(x,TOP+.015,z);t.rotation.y=ry;deskLG.add(t);
-  const shaft=new THREE.Mesh(new THREE.CylinderGeometry(.008,.011,.32),stickM);
-  shaft.rotation.z=Math.PI/2;t.add(shaft);
-  const tip=new THREE.Mesh(new THREE.SphereGeometry(.011,10,8),stickM);
-  tip.position.x=-.17;t.add(tip);});
 // stacked storage bins on the floor by the pegboard
 const binM=new THREE.MeshStandardMaterial({color:0x2438c8,roughness:.55,emissive:0x2438c8,emissiveIntensity:.18});
 [[-4.25,-1.48,-0.55],[-3.82,-1.48,-0.72],[-4.05,-1.25,-0.63]].forEach(([x,y,z])=>{
@@ -1073,8 +1056,6 @@ if(dnEl)dnEl.addEventListener('click',()=>{skyTarget=skyTarget<0.5?1:0;dnEl.clas
 const gltfL=new GLTFLoader();
 const PROP_LIST=[
   // [file, parent, x, y, z, targetSize, rotY, rotX]
-  ['cassette',  deskLG,  .1,  TOP,  .32, .14,  0.6, -Math.PI/2],  // lying flat on the mat
-  ['pedal',     deskLG, -1.2, TOP, .1,  .18, -0.2, 0],   // moved front-left; MPC row owns the back
   ['mic',       deskRG,  .15, TOP, -.42, .34,  0.2, 0],
   ['speaker',   deskRG, -1.15,TOP, -.35, .38,  0.5, 0],
   ['speaker',   deskRG,  1.15,TOP, -.35, .38, -0.5, 0],   // mirrored on the right edge
