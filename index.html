@@ -330,10 +330,13 @@ function setCam(s){
   document.body.classList.toggle('in-screen',s==='screen'||s==='mpc');
   if(s==='screen'){ if(!screenframe.src)screenframe.src='assets/y2k-os/index.html'; }
   else screenframe.classList.remove('show');
-  if(s==='mpc'&&curMpc){
-    const want='assets/mpc/index.html#'+curMpc.song;
-    if(!mpcframe.src)mpcframe.src=want;
-    else try{mpcframe.contentWindow.location.hash=curMpc.song;}catch(_){mpcframe.src=want;}
+  if(s==='mpc'){
+    if(!curMpc)curMpc=mpcUnits[0];   // same fallback camTarget() uses, so the iframe src always gets set
+    if(curMpc){
+      const want='assets/mpc/index.html#'+curMpc.song;
+      if(!mpcframe.getAttribute('src'))mpcframe.src=want;   // attribute, not resolved .src
+      else try{mpcframe.contentWindow.location.hash=curMpc.song;}catch(_){mpcframe.src=want;}
+    }
   }
   else{ mpcframe.classList.remove('show');   // left the MPC -> silence it (audio would keep playing over the room otherwise)
     try{mpcframe.contentWindow&&mpcframe.contentWindow.__mpcStop&&mpcframe.contentWindow.__mpcStop();}catch(_){}
