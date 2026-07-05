@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>OTTI — MPC2000XL</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+  /* theme vars — overridden per song on <body class="theme-..."> */
+  body{
+    --c1:#d02420; --c2:#c01d17; --c3:#8f1310; --edge:#5f0c0a;      /* chassis */
+    --pad1:#571915; --pad2:#4a1512; --pad3:#38100d;                 /* pads */
+    --lcdtint:#1a1202; --lcdtxt:#ffc233; --lcdglow:255,194,51;      /* display */
+    --ink:#f3d9d5; --btn1:#3a0f0d; --btn2:#240807; --sil:rgba(255,255,255,.55);
+  }
+  body.theme-otti{
+    --c1:#232327; --c2:#17171b; --c3:#0c0c0f; --edge:#050506;
+    --pad1:#1d2415; --pad2:#161c10; --pad3:#0e120a;
+    --lcdtint:#061202; --lcdtxt:#8dff1a; --lcdglow:141,255,26;
+    --ink:#d9f5c8; --btn1:#101013; --btn2:#070708; --sil:rgba(255,255,255,.5);
+  }
+  body.theme-runaway{
+    --c1:#f4f0e4; --c2:#e9e3d2; --c3:#cfc7b0; --edge:#a89f86;
+    --pad1:#b9d6bd; --pad2:#a5c9aa; --pad3:#8db495;
+    --lcdtint:#0d1a0a; --lcdtxt:#7dffa0; --lcdglow:125,255,160;
+    --ink:#2c2c28; --btn1:#d8d2c0; --btn2:#b7ae94; --sil:rgba(60,55,40,.75);
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{width:100%;height:100%;overflow:hidden;background:#0a0404;font-family:'DM Mono',monospace;
+    user-select:none;-webkit-user-select:none}
+  #stage{position:absolute;left:50%;top:50%;width:1500px;height:1060px;transform-origin:center center}
+  #unit{position:absolute;inset:0;display:flex;background:linear-gradient(160deg,var(--c1),var(--c2) 40%,var(--c3));
+    border-radius:26px;border:2px solid var(--edge);
+    box-shadow:inset 0 2px 0 rgba(255,255,255,.18),inset 0 -14px 30px rgba(0,0,0,.35),0 30px 80px rgba(0,0,0,.8)}
+
+  /* ---------- left half ---------- */
+  .left{width:46%;padding:38px 30px 30px 40px;display:flex;flex-direction:column}
+  .akai{font-weight:500;font-size:34px;letter-spacing:.32em;color:var(--ink)}
+  .akai small{font-size:13px;letter-spacing:.08em;opacity:.55;margin-left:10px}
+  .lcd{margin-top:18px;background:linear-gradient(180deg,var(--lcdtint),#0c0803 60%);border-radius:10px;padding:16px 20px;
+    border:3px solid rgba(0,0,0,.55);box-shadow:inset 0 0 26px rgba(0,0,0,.9),0 1px 0 rgba(255,255,255,.15);
+    min-height:150px;position:relative;overflow:hidden}
+  .lcd:after{content:'';position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent 0 2px,rgba(0,0,0,.16) 2px 4px);pointer-events:none}
+  .lcd .l1{color:var(--lcdtxt);font-size:30px;letter-spacing:.18em;text-shadow:0 0 14px rgba(var(--lcdglow),.55)}
+  .lcd .l2{color:var(--lcdtxt);font-size:16px;letter-spacing:.2em;margin-top:8px;opacity:.85}
+  .lcd .l3{color:var(--lcdtxt);opacity:.55;font-size:14px;letter-spacing:.14em;margin-top:16px}
+  .lcd .pow{position:absolute;right:20px;top:16px;text-align:right}
+  .lcd .pow b{display:block;color:var(--lcdtxt);opacity:.55;font-size:11px;letter-spacing:.22em}
+  .lcd .pow span{display:block;color:var(--lcdtxt);font-size:15px;letter-spacing:.1em;margin-top:4px;text-shadow:0 0 10px rgba(var(--lcdglow),.5)}
+  .lcd .stat{position:absolute;right:20px;bottom:14px;color:var(--lcdtxt);opacity:.6;font-size:12px;letter-spacing:.14em}
+
+  .fkeys{display:flex;gap:14px;margin:20px 4px 0}
+  .fk{flex:1;text-align:center}
+  .fk i{display:block;height:24px;border-radius:5px;background:linear-gradient(180deg,var(--btn1),var(--btn2));
+    border:1px solid rgba(0,0,0,.5);box-shadow:0 2px 0 rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.08)}
+  .fk span{display:block;margin-top:5px;font-size:10px;letter-spacing:.1em;color:var(--sil)}
+
+  .midrow{display:flex;margin-top:26px;flex:1}
+  .btncluster{display:grid;grid-template-columns:repeat(3,54px);gap:12px 14px;align-content:start}
+  .mb{text-align:center}
+  .mb i{display:block;height:20px;border-radius:4px;background:linear-gradient(180deg,var(--btn1),var(--btn2));
+    border:1px solid rgba(0,0,0,.5);box-shadow:0 2px 0 rgba(0,0,0,.4)}
+  .mb span{display:block;margin-top:3px;font-size:8.5px;letter-spacing:.06em;color:var(--sil);opacity:.8}
+  .slider{width:56px;margin-left:26px;text-align:center}
+  .slider .lab{font-size:8.5px;color:var(--sil);letter-spacing:.08em}
+  .slider .track{width:8px;height:150px;margin:8px auto 0;background:rgba(0,0,0,.55);border-radius:4px;
+    box-shadow:inset 0 1px 4px rgba(0,0,0,.8);position:relative}
+  .slider .knob{position:absolute;left:50%;transform:translateX(-50%);top:62%;width:30px;height:16px;
+    background:linear-gradient(180deg,#3c3c42,#131316);border-radius:3px;box-shadow:0 3px 5px rgba(0,0,0,.6)}
+  .jogwrap{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;padding-top:6px}
+  .jog{width:170px;height:170px;border-radius:50%;
+    background:radial-gradient(circle at 38% 32%,#2e2e33,#0c0c0f 70%);
+    border:6px solid #070708;box-shadow:0 10px 24px rgba(0,0,0,.65),inset 0 3px 6px rgba(255,255,255,.07);position:relative}
+  .jog:after{content:'';position:absolute;left:50%;top:50%;width:56px;height:56px;border-radius:50%;
+    transform:translate(-50%,-50%);background:radial-gradient(circle at 40% 35%,#232327,#0a0a0c)}
+  .cursor{display:flex;gap:10px;margin-top:16px}
+  .cur{width:34px;height:24px;border-radius:5px;background:linear-gradient(180deg,var(--btn1),var(--btn2));
+    border:1px solid rgba(0,0,0,.5);box-shadow:0 2px 0 rgba(0,0,0,.4)}
+
+  .transport{display:flex;gap:16px;align-items:flex-end;margin-top:auto}
+  .tb{text-align:center}
+  .tb i{display:block;width:74px;height:40px;border-radius:7px;background:linear-gradient(180deg,var(--btn1),var(--btn2));
+    border:1px solid rgba(0,0,0,.55);box-shadow:0 3px 0 rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.07);position:relative}
+  .tb.rec i:before{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    width:12px;height:12px;border-radius:50%;background:#e6b32a;box-shadow:0 0 8px rgba(230,179,42,.7)}
+  .tb.dub i{background:linear-gradient(180deg,#8f6c12,#553f08)}
+  .tb.dub i:before{content:'OVER DUB';position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    font-size:9px;letter-spacing:.08em;color:#f8e7b0}
+  .tb span{display:block;margin-top:6px;font-size:9.5px;letter-spacing:.1em;color:var(--sil)}
+
+  /* ---------- right half ---------- */
+  .right{width:54%;padding:30px 40px 30px 18px;display:flex;flex-direction:column}
+  .rhead{display:flex;justify-content:flex-end;align-items:flex-start;gap:26px}
+  .model{text-align:right}
+  .model .m1{font-size:30px;color:var(--ink);letter-spacing:.02em}
+  .model .m1 b{font-weight:500}
+  .model .m1 small{font-size:15px;vertical-align:top}
+  .model .m2{font-size:10px;letter-spacing:.34em;color:var(--sil);margin-top:4px}
+  .knobs{display:flex;gap:22px}
+  .knob{text-align:center}
+  .knob i{display:block;width:52px;height:52px;border-radius:50%;
+    background:radial-gradient(circle at 40% 32%,#3a3a40,#0d0d10 72%);
+    border:3px solid #060607;box-shadow:0 5px 12px rgba(0,0,0,.55);position:relative}
+  .knob.vol i{background:radial-gradient(circle at 40% 32%,#cfcfd4,#7f7f86 75%)}
+  .knob i:after{content:'';position:absolute;left:50%;top:6px;width:3px;height:14px;background:#d33;transform:translateX(-50%)}
+  .knob.vol i:after{background:#222}
+  .knob span{display:block;margin-top:6px;font-size:8.5px;letter-spacing:.14em;color:var(--sil)}
+
+  .banks{display:flex;gap:26px;align-items:center;margin:2px 0 14px}
+  .banks .lab{font-size:12px;letter-spacing:.28em;color:var(--sil)}
+  .bank{text-align:center}
+  .bank .led{width:9px;height:9px;border-radius:50%;background:rgba(0,0,0,.4);margin:0 auto 5px;border:1px solid rgba(0,0,0,.5)}
+  .bank.on .led{background:#ffd94a;box-shadow:0 0 8px rgba(255,217,74,.9)}
+  .bank i{display:block;width:52px;height:16px;border-radius:4px;background:linear-gradient(180deg,var(--btn1),var(--btn2));
+    border:1px solid rgba(0,0,0,.5);box-shadow:0 2px 0 rgba(0,0,0,.45)}
+  .bank span{display:block;margin-top:4px;font-size:10px;color:var(--sil)}
+
+  .grid{flex:1;display:grid;grid-template-columns:repeat(4,1fr);grid-template-rows:repeat(4,1fr);gap:18px}
+  .padk{position:relative;border-radius:12px;background:linear-gradient(160deg,var(--pad1),var(--pad2) 55%,var(--pad3));
+    border:2px solid rgba(0,0,0,.45);cursor:pointer;
+    box-shadow:0 6px 0 rgba(0,0,0,.4),inset 0 2px 0 rgba(255,255,255,.07),inset 0 -8px 18px rgba(0,0,0,.3);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+    transition:box-shadow .12s ease, transform .05s ease, background .15s ease}
+  .padk .key{font-size:15px;color:var(--ink);opacity:.42;letter-spacing:.06em}
+  .padk .lab{font-size:17px;color:var(--ink);letter-spacing:.08em;text-align:center;line-height:1.3;padding:0 8px}
+  .padk .sub{font-size:11px;color:var(--ink);opacity:.4;letter-spacing:.14em}
+  .padk:active{transform:translateY(2px)}
+  .padk.hit{box-shadow:0 0 0 4px rgba(255,255,255,.9),0 0 34px rgba(255,255,255,.55),0 6px 0 rgba(0,0,0,.4)}
+  .padk.looping{box-shadow:0 0 0 3px rgba(255,90,60,.9),0 0 30px rgba(255,90,60,.6),0 6px 0 rgba(0,0,0,.4)}
+  .padk.fx{background:linear-gradient(160deg,#0d1d33,#0a1626 60%,#081020);border-color:#0a2a4a}
+  .padk.fx .lab{color:#66b7ff}
+  .padk.fx .key,.padk.fx .sub{color:#9cc9f5}
+  .padk.fx.held{box-shadow:0 0 0 3px rgba(102,183,255,.9),0 0 34px rgba(102,183,255,.6),0 6px 0 rgba(0,0,0,.4)}
+  .padk.echo .lab{color:#4be0e8}
+  .padk.echo.held{box-shadow:0 0 0 3px rgba(75,224,232,.9),0 0 34px rgba(75,224,232,.6),0 6px 0 rgba(0,0,0,.4)}
+  .padk.util .lab{opacity:.6}
+  .padk.info .lab{font-size:34px;opacity:.75}
+  .padk.empty{opacity:.55;cursor:default}
+  .padk.empty:active{transform:none}
+
+  /* info popup */
+  #pop{position:fixed;inset:0;background:rgba(4,2,2,.78);display:none;align-items:center;justify-content:center;z-index:50}
+  #pop.show{display:flex}
+  #pop .card{width:min(560px,88vw);background:#160808;border:1px solid rgba(255,255,255,.14);border-radius:14px;
+    padding:30px 34px;color:#eee;position:relative}
+  #pop h2{font-size:19px;letter-spacing:.1em;color:#ff5a3c;margin-bottom:12px}
+  #pop p,#pop li{font-size:13px;line-height:1.65;color:rgba(255,255,255,.8)}
+  #pop ul{margin:10px 0 0 18px}
+  #pop .x{position:absolute;right:14px;top:10px;background:none;border:none;color:#aaa;font-size:18px;cursor:pointer}
+  #pop .cred{margin-top:16px;font-size:11px;color:rgba(255,255,255,.45)}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="unit">
+    <div class="left">
+      <div class="akai">AKAI<small>professional</small></div>
+      <div class="lcd">
+        <div class="l1" id="lcd1"></div>
+        <div class="l2" id="lcd2"></div>
+        <div class="l3" id="lcd3"></div>
+        <div class="pow"><b>POWERED BY</b><span>OTTI RECORDS</span></div>
+        <div class="stat" id="stat">CLICK ANY PAD TO LOAD</div>
+      </div>
+      <div class="fkeys">
+        <div class="fk"><i></i><span>F1</span></div><div class="fk"><i></i><span>F2</span></div>
+        <div class="fk"><i></i><span>F3</span></div><div class="fk"><i></i><span>F4</span></div>
+        <div class="fk"><i></i><span>F5</span></div><div class="fk"><i></i><span>F6</span></div>
+      </div>
+      <div class="midrow">
+        <div class="btncluster">
+          <div class="mb"><i></i><span>7 OTHER</span></div><div class="mb"><i></i><span>8 MIDI</span></div><div class="mb"><i></i><span>9 SYNC</span></div>
+          <div class="mb"><i></i><span>4 SAMPLING</span></div><div class="mb"><i></i><span>5 STEP EDIT</span></div><div class="mb"><i></i><span>6 MIXER</span></div>
+          <div class="mb"><i></i><span>1 MAIN</span></div><div class="mb"><i></i><span>2 DRUM</span></div><div class="mb"><i></i><span>3 PROGRAM</span></div>
+        </div>
+        <div class="slider"><div class="lab">NOTE<br/>VARIATION</div><div class="track"><div class="knob"></div></div></div>
+        <div class="jogwrap"><div class="jog"></div>
+          <div class="cursor"><div class="cur"></div><div class="cur"></div><div class="cur"></div><div class="cur"></div></div>
+        </div>
+      </div>
+      <div class="transport">
+        <div class="tb rec"><i></i><span>REC</span></div>
+        <div class="tb dub"><i></i><span>OVER DUB</span></div>
+        <div class="tb"><i></i><span>STOP</span></div>
+        <div class="tb"><i></i><span>PLAY</span></div>
+        <div class="tb"><i></i><span>PLAY START</span></div>
+      </div>
+    </div>
+    <div class="right">
+      <div class="rhead">
+        <div class="model">
+          <div class="m1">MPC<b>2000</b><small>XL</small></div>
+          <div class="m2">MIDI PRODUCTION CENTER</div>
+        </div>
+        <div class="knobs">
+          <div class="knob"><i></i><span>REC GAIN</span></div>
+          <div class="knob vol"><i></i><span>MAIN VOLUME</span></div>
+        </div>
+      </div>
+      <div class="banks">
+        <span class="lab">PAD BANK</span>
+        <div class="bank on"><div class="led"></div><i></i><span>A</span></div>
+        <div class="bank"><div class="led"></div><i></i><span>B</span></div>
+        <div class="bank"><div class="led"></div><i></i><span>C</span></div>
+        <div class="bank"><div class="led"></div><i></i><span>D</span></div>
+      </div>
+      <div class="grid" id="grid"></div>
+    </div>
+  </div>
+</div>
+
+<div id="pop">
+  <div class="card">
+    <button class="x" id="popx">✕</button>
+    <h2 id="popTitle"></h2>
+    <p id="popText"></p>
+    <ul id="popKeys"></ul>
+    <p class="cred" id="popCred"></p>
+  </div>
+</div>
+
+<script>
+/* ================= song configs (hash-selected: #otti #power #runaway) ================= */
+const SONGS={
+  otti:{
+    theme:'theme-otti', lcd:['UNTITLED','OTTI','Pad Bank: A BPM: 140'],
+    about:'An interactive MPC loaded with stems and vocal chops from an unreleased OTTI record. Bring the song in and out, stem by stem, and chop the vocal live.',
+    keysHelp:'A S D F G H — vocal chops · J = vocals · Z C V = drums / bass / keys · K / X = hold reverb / echo · N = stop',
+    cred:'Loops stay in sync automatically — all stems run on one clock. All audio © OTTI.',
+    pads:[
+      {key:'A',label:'CHOP 1',type:'shot',file:'samples/chop1.m4a'},
+      {key:'S',label:'CHOP 2',type:'shot',file:'samples/chop2.m4a'},
+      {key:'D',label:'CHOP 3',type:'shot',file:'samples/chop3.m4a'},
+      {key:'F',label:'CHOP 4',type:'shot',file:'samples/chop4.m4a'},
+      {key:'G',label:'CHOP 5',type:'shot',file:'samples/chop5.m4a'},
+      {key:'H',label:'CHOP 6',type:'shot',file:'samples/chop6.m4a'},
+      {key:'J',label:'VOCALS',type:'stem',file:'samples/vocals.m4a'},
+      {key:'K',label:'REVERB',type:'fx',fx:'reverb',sub:'HOLD',cls:'fx'},
+      {key:'Z',label:'DRUMS',type:'stem',file:'samples/drums.m4a'},
+      {key:'X',label:'ECHO',type:'fx',fx:'echo',sub:'HOLD',cls:'fx echo'},
+      {key:'C',label:'BASS',type:'stem',file:'samples/bass.m4a'},
+      {key:'V',label:'KEYS',type:'stem',file:'samples/keys.m4a'},
+      {key:'B',label:'—',type:'empty'},
+      {key:'N',label:'Stop',type:'stop',cls:'util'},
+      {key:'M',label:'—',type:'empty'},
+      {key:'',label:'i',type:'info',sub:'CLICK FOR INFO',cls:'info'},
+    ]},
+  power:{
+    theme:'', lcd:['POWER','KANYE WEST','Pad Bank: A BPM: 154'],
+    about:'Play POWER on the MPC — trigger the vocal chops, bring in the claps and drums, ride the reverb and echo.',
+    keysHelp:'A S D F — vocal chops · G = clap loop · H = guitar · J = schiz · Z = drums loop · K / X = hold reverb / echo · N = stop',
+    cred:'A homage to the growthr.com MPC project. POWER © Kanye West.',
+    pads:[
+      {key:'A',label:'AH',type:'shot',file:'samples-power/ah.mp3'},
+      {key:'S',label:'EY',type:'shot',file:'samples-power/ey.mp3'},
+      {key:'D',label:'EY EY',type:'shot',file:'samples-power/eyey.mp3'},
+      {key:'F',label:'EY EY EY',type:'shot',file:'samples-power/eyeyey.mp3'},
+      {key:'G',label:'CLAP',type:'loop',file:'samples-power/clap.wav'},
+      {key:'H',label:'GUITAR',type:'shot',file:'samples-power/guitar-hit.mp3'},
+      {key:'J',label:'SCHIZ',type:'shot',file:'samples-power/schiz.mp3'},
+      {key:'K',label:'REVERB',type:'fx',fx:'reverb',sub:'HOLD',cls:'fx'},
+      {key:'Z',label:'DRUMS',type:'loop',file:'samples-power/drums.wav'},
+      {key:'X',label:'ECHO',type:'fx',fx:'echo',sub:'HOLD',cls:'fx echo'},
+      {key:'C',label:'—',type:'empty'},
+      {key:'V',label:'—',type:'empty'},
+      {key:'B',label:'—',type:'empty'},
+      {key:'N',label:'Stop',type:'stop',cls:'util'},
+      {key:'M',label:'—',type:'empty'},
+      {key:'',label:'i',type:'info',sub:'CLICK FOR INFO',cls:'info'},
+    ]},
+  runaway:{
+    theme:'theme-runaway', lcd:['RUNAWAY','KANYE WEST','Pad Bank: A BPM: 94'],
+    about:'Play the RUNAWAY piano on the MPC — the riff is under your fingers on A–K, with the beat loop and vocal shots below.',
+    keysHelp:'A–K = piano notes · Z = beat loop · X C V B = vocal shots · N = stop',
+    cred:'A homage to the growthr.com MPC project. RUNAWAY © Kanye West.',
+    pads:[
+      {key:'A',label:'PIANO 1',type:'shot',file:'samples-runaway/piano1.mp3'},
+      {key:'S',label:'PIANO 2',type:'shot',file:'samples-runaway/piano2.mp3'},
+      {key:'D',label:'PIANO 3',type:'shot',file:'samples-runaway/piano3.mp3'},
+      {key:'F',label:'PIANO 4',type:'shot',file:'samples-runaway/piano4.mp3'},
+      {key:'G',label:'PIANO 5',type:'shot',file:'samples-runaway/piano5.mp3'},
+      {key:'H',label:'PIANO 6',type:'shot',file:'samples-runaway/piano6.mp3'},
+      {key:'J',label:'PIANO 7',type:'shot',file:'samples-runaway/piano7.mp3'},
+      {key:'K',label:'PIANO 8',type:'shot',file:'samples-runaway/piano8.mp3'},
+      {key:'Z',label:'BEAT LOOP',type:'loop',file:'samples-runaway/Instrumental-loop.mp3'},
+      {key:'X',label:'LOOKATCHA',type:'shot',file:'samples-runaway/LookAtCha.mp3'},
+      {key:'C',label:'STARS',type:'shot',file:'samples-runaway/BeautifulStars.mp3'},
+      {key:'V',label:'LADIES & GENTS',type:'shot',file:'samples-runaway/LadiesNGentlemen.mp3'},
+      {key:'B',label:'HEY!',type:'shot',file:'samples-runaway/Hey.mp3'},
+      {key:'N',label:'Stop',type:'stop',cls:'util'},
+      {key:'M',label:'—',type:'empty'},
+      {key:'',label:'i',type:'info',sub:'CLICK FOR INFO',cls:'info'},
+    ]},
+};
+function songId(){const h=(location.hash||'').replace('#','');return SONGS[h]?h:'otti';}
+
+/* ================= audio engine (shared across songs) ================= */
+let ctx=null,bus=null,revWet=null,echoWet=null;
+const bufs={};                 // decoded buffers by file path
+let stemGain={},stemOn={};     // otti synced stems
+let loopSrc={},loopOn={};      // independent loop pads (power clap/drums, runaway beat)
+let loaded=false,loading=false,queue=[];
+let song=null,els={},byKey={};
+const grid=document.getElementById('grid'),stat=document.getElementById('stat');
+
+function initCtx(){
+  if(ctx)return;
+  ctx=new (window.AudioContext||window.webkitAudioContext)();
+  bus=ctx.createGain();
+  const dry=ctx.createGain();dry.gain.value=1;
+  bus.connect(dry);dry.connect(ctx.destination);
+  const conv=ctx.createConvolver();
+  const len=ctx.sampleRate*2.2,imp=ctx.createBuffer(2,len,ctx.sampleRate);
+  for(let ch=0;ch<2;ch++){const d=imp.getChannelData(ch);
+    for(let i=0;i<len;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/len,2.6);}
+  conv.buffer=imp;
+  revWet=ctx.createGain();revWet.gain.value=0;
+  bus.connect(conv);conv.connect(revWet);revWet.connect(ctx.destination);
+  const dl=ctx.createDelay(1.0);dl.delayTime.value=0.32;
+  const fb=ctx.createGain();fb.gain.value=0.42;dl.connect(fb);fb.connect(dl);
+  echoWet=ctx.createGain();echoWet.gain.value=0;
+  bus.connect(dl);dl.connect(echoWet);echoWet.connect(ctx.destination);
+}
+function stopAll(){
+  if(!ctx)return;
+  Object.keys(stemGain).forEach(k=>{stemGain[k].gain.setTargetAtTime(0,ctx.currentTime,0.02);stemOn[k]=false;
+    els[k]&&els[k].classList.remove('looping');});
+  Object.keys(loopSrc).forEach(k=>{try{loopSrc[k].stop();}catch(_){}delete loopSrc[k];loopOn[k]=false;
+    els[k]&&els[k].classList.remove('looping');});
+}
+async function loadAll(){
+  if(loading||loaded)return;loading=true;
+  stat.textContent='LOADING…';
+  const files=song.pads.filter(p=>p.file).map(p=>p.file).filter(f=>!bufs[f]);
+  await Promise.all(files.map(async f=>{
+    const r=await fetch(f);bufs[f]=await ctx.decodeAudioData(await r.arrayBuffer());
+  }));
+  // otti stems: all start on one clock, muted — a stem pad is just a gain flip, always in sync
+  const stems=song.pads.filter(p=>p.type==='stem');
+  if(stems.length){
+    const t0=ctx.currentTime+0.05;
+    stems.forEach(p=>{
+      if(stemGain[p.key])return;
+      const src=ctx.createBufferSource();src.buffer=bufs[p.file];src.loop=true;
+      const g=ctx.createGain();g.gain.value=0;
+      src.connect(g);g.connect(bus);src.start(t0);
+      stemGain[p.key]=g;stemOn[p.key]=false;
+    });
+  }
+  loaded=true;loading=false;stat.textContent='READY';
+  queue.splice(0).forEach(press);
+}
+function flash(p){const el=els[p.key||'INFO'];if(!el)return;el.classList.add('hit');setTimeout(()=>el.classList.remove('hit'),140);}
+
+function press(p){
+  if(p.type==='info'){openPop();return;}
+  if(p.type==='empty')return;
+  initCtx();ctx.resume();
+  if(!loaded){if(!queue.includes(p))queue.push(p);loadAll();flash(p);return;}
+  if(p.type==='shot'){
+    const src=ctx.createBufferSource();src.buffer=bufs[p.file];src.connect(bus);src.start();flash(p);
+  }else if(p.type==='stem'){
+    stemOn[p.key]=!stemOn[p.key];
+    stemGain[p.key].gain.setTargetAtTime(stemOn[p.key]?1:0,ctx.currentTime,0.015);
+    els[p.key].classList.toggle('looping',stemOn[p.key]);
+  }else if(p.type==='loop'){
+    if(loopOn[p.key]){try{loopSrc[p.key].stop();}catch(_){}delete loopSrc[p.key];loopOn[p.key]=false;
+      els[p.key].classList.remove('looping');}
+    else{const src=ctx.createBufferSource();src.buffer=bufs[p.file];src.loop=true;
+      src.connect(bus);src.start();loopSrc[p.key]=src;loopOn[p.key]=true;
+      els[p.key].classList.add('looping');}
+  }else if(p.type==='fx'){
+    els[p.key].classList.add('held');
+    (p.fx==='reverb'?revWet:echoWet).gain.setTargetAtTime(0.55,ctx.currentTime,0.03);
+  }else if(p.type==='stop'){
+    stopAll();flash(p);
+  }
+  window.__mpcState={song:songId(),loaded,stems:{...stemOn},loops:{...loopOn},t:ctx?ctx.currentTime:0,state:ctx?ctx.state:'none'};
+}
+function release(p){
+  if(!ctx||p.type!=='fx')return;
+  els[p.key].classList.remove('held');
+  (p.fx==='reverb'?revWet:echoWet).gain.setTargetAtTime(0,ctx.currentTime,0.08);
+}
+
+/* ================= build / rebuild UI for the selected song ================= */
+function build(){
+  song=SONGS[songId()];
+  stopAll();loaded=false;loading=false;queue=[];stemGain={};stemOn={};
+  document.body.className=song.theme;
+  const [a,b,c]=song.lcd;
+  document.getElementById('lcd1').textContent=a;
+  document.getElementById('lcd2').textContent=b;
+  document.getElementById('lcd3').textContent=c;
+  stat.textContent='CLICK ANY PAD TO LOAD';
+  grid.innerHTML='';els={};byKey={};
+  song.pads.forEach(p=>{
+    const d=document.createElement('div');
+    d.className='padk '+(p.cls||'')+(p.type==='empty'?' empty':'');
+    d.innerHTML=(p.key?`<span class="key">${p.key}</span>`:'<span class="key">&nbsp;</span>')
+      +`<span class="lab">${p.label}</span>`+(p.sub?`<span class="sub">${p.sub}</span>`:'');
+    grid.appendChild(d);els[p.key||'INFO']=d;
+    if(p.type==='empty')return;
+    d.addEventListener('pointerdown',e=>{e.preventDefault();press(p);});
+    if(p.type==='fx')['pointerup','pointercancel','pointerleave'].forEach(ev=>d.addEventListener(ev,()=>release(p)));
+    if(p.key)byKey[p.key]=p;
+  });
+  window.__mpcSong=songId();
+}
+addEventListener('hashchange',build);
+build();
+
+addEventListener('keydown',e=>{
+  if(e.key==='Escape'){try{parent.__mpcExit&&parent.__mpcExit();}catch(_){}return;}
+  if(e.repeat)return;const p=byKey[e.key.toUpperCase()];if(p)press(p);
+});
+addEventListener('keyup',e=>{const p=byKey[e.key.toUpperCase()];if(p)release(p);});
+
+/* info popup */
+function openPop(){
+  document.getElementById('popTitle').textContent=song.lcd[0]+' — MPC2000XL';
+  document.getElementById('popText').textContent=song.about;
+  document.getElementById('popKeys').innerHTML=`<li><b>Keyboard:</b> ${song.keysHelp}</li><li><b>Mouse / touch:</b> tap any pad</li><li><b>ESC</b> backs out to the room</li>`;
+  document.getElementById('popCred').textContent=song.cred;
+  document.getElementById('pop').classList.add('show');
+}
+document.getElementById('popx').addEventListener('click',()=>document.getElementById('pop').classList.remove('show'));
+document.getElementById('pop').addEventListener('click',e=>{if(e.target.id==='pop')e.currentTarget.classList.remove('show');});
+
+/* scale the fixed 1500x1060 stage into whatever rect the parent gives us */
+function fit(){
+  const s=Math.min(innerWidth/1500,innerHeight/1060);
+  document.getElementById('stage').style.transform=`translate(-50%,-50%) scale(${s})`;
+}
+addEventListener('resize',fit);fit();
+window.focus();
+</script>
+</body>
+</html>
