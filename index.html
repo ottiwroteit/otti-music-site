@@ -881,20 +881,26 @@ const ledMesh=new THREE.Mesh(new THREE.PlaneGeometry(PW*S*.44,PW*S*.44*(420/760)
   new THREE.MeshBasicMaterial({map:ledTex,toneMapped:false}));
 ledMesh.position.set(PW*S*.27,.78,.006);back.add(ledMesh);
 
-/* big neon sign floating above on the back wall — the OTTI logo */
+/* big sign floating above on the back wall — the MSL (Make Sense Later Records) chrome logo */
 const [nsC,ns]=makeCanvas(760,640);
 const nsTex=ctex(nsC);
 function drawSign(img){
   ns.clearRect(0,0,760,640);
   if(img){
+    // key the near-black backdrop out via a soft luminance ramp — keeps the chrome, lets the
+    // bright metal edges glow in the dark room (the logo PNG is opaque, so we make our own alpha)
     const t=document.createElement('canvas');t.width=t.height=512;
     const tc=t.getContext('2d');
     tc.drawImage(img,0,0,512,512);
-    tc.globalCompositeOperation='source-in';         // tint the white mark neon green
-    tc.fillStyle='#a6ff45';tc.fillRect(0,0,512,512);
-    ns.shadowColor='#8dff1a';ns.shadowBlur=42;
-    ns.drawImage(t,124,-6,512,512);
-    ns.drawImage(t,124,-6,512,512);                  // double pass = hotter core
+    const id=tc.getImageData(0,0,512,512),d=id.data;
+    for(let i=0;i<d.length;i+=4){
+      const lum=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+      d[i+3]=Math.max(0,Math.min(255,(lum-8)/(30-8)*255));   // <8 transparent, >30 opaque
+    }
+    tc.putImageData(id,0,0);
+    ns.shadowColor='#cfe4ff';ns.shadowBlur=34;               // cool metallic glow, not green
+    ns.drawImage(t,124,96,512,512);
+    ns.drawImage(t,124,96,512,512);                           // double pass = hotter core (dropped so the top clears frame)
   }
   ns.textAlign='center';ns.font='34px Bungee, sans-serif';
   ns.shadowColor='#2be0e0';ns.shadowBlur=18;ns.fillStyle='#dffcff';
@@ -903,7 +909,7 @@ function drawSign(img){
 }
 const logoImg=new Image();
 logoImg.onload=()=>drawSign(logoImg);
-logoImg.src='Otti Transparent.png';
+logoImg.src='MSL-LOGO.PNG';
 drawSign(null);
 document.fonts.ready.then(()=>drawSign(logoImg.complete&&logoImg.naturalWidth?logoImg:null));
 const nsM=new THREE.MeshBasicMaterial({map:nsTex,transparent:true,toneMapped:false});
