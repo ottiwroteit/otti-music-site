@@ -66,9 +66,10 @@
   #backchip.show{display:block}
   #backchip kbd{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:0 5px}
   /* live web app on the earth-horizon monitor — positioned over its projected screen rect */
-  #screenframe{position:fixed;z-index:9;border:0;background:#000;opacity:0;pointer-events:none;
+  #screenframe,#mpcframe{position:fixed;z-index:9;border:0;background:#000;opacity:0;pointer-events:none;
     transition:opacity .25s ease;box-shadow:0 0 40px rgba(0,0,0,.6)}
-  #screenframe.show{opacity:1;pointer-events:auto}
+  #mpcframe{background:#0a0404;border-radius:14px;box-shadow:0 0 60px rgba(200,20,20,.35),0 20px 60px rgba(0,0,0,.7)}
+  #screenframe.show,#mpcframe.show{opacity:1;pointer-events:auto}
   body.in-screen #playbtn,body.in-screen .hint{display:none}
   @media (max-width:520px){ .livepill{font-size:9px;padding:5px 9px;gap:5px} .livepill .brand{font-size:10px} .cta{font-size:10px;padding:8px 11px} }
 </style>
@@ -85,6 +86,7 @@
 <button id="playbtn">PLAY</button>
 <button id="backchip">Go Back <kbd>ESC</kbd></button>
 <iframe id="screenframe" title="Y2K Desktop OS" loading="lazy"></iframe>
+<iframe id="mpcframe" title="OTTI MPC2000XL" loading="lazy" allow="autoplay"></iframe>
 <div class="hint"><kbd>&larr;</kbd><kbd>&rarr;</kbd> flippers · <kbd>Space</kbd> launch · mobile: tap sides</div>
 
 <script>
@@ -303,29 +305,52 @@ function camTarget(){
     const dist=portrait?2.7:1.35, fov=portrait?62:40;
     return {pos:_gw.clone().addScaledVector(_sn,dist),look:_gw.clone(),fov};
   }
-  const c=CAMS[camState];
+  if(camState==='mpc'&&(curMpc||mpcUnits[0])){ // head-on at the clicked machine's panel
+    if(!curMpc)curMpc=mpcUnits[0];
+    curMpc.face.getWorldPosition(_gw);
+    curMpc.face.getWorldQuaternion(_sq);
+    _sn.set(0,0,1).applyQuaternion(_sq);
+    const dist=portrait?2.05:1.15, fov=portrait?60:42;
+    return {pos:_gw.clone().addScaledVector(_sn,dist),look:_gw.clone(),fov};
+  }
+  const c=CAMS[camState]||CAMS.wide;   // unknown/unready state never crashes the loop
   return portrait
     ? {pos:new THREE.Vector3(...c.ppos),look:new THREE.Vector3(...c.plook),fov:c.pfov}
     : {pos:new THREE.Vector3(...c.pos), look:new THREE.Vector3(...c.look), fov:c.fov};
 }
 const backchip=document.getElementById('backchip');
 const screenframe=document.getElementById('screenframe');
+const mpcframe=document.getElementById('mpcframe');
+const focusStates=['globe','screen','mpc'];
+window.__mpcExit=()=>setCam('wide');   // the MPC app calls this on ESC
 function setCam(s){
   camState=s;
-  backchip.classList.toggle('show',s==='globe'||s==='screen');
-  window.__inScreen=s==='screen';           // pinball input guard (classic script reads this)
-  document.body.classList.toggle('in-screen',s==='screen');
+  backchip.classList.toggle('show',focusStates.includes(s));
+  window.__inScreen=(s==='screen'||s==='mpc'); // pinball input guard (classic script reads this)
+  document.body.classList.toggle('in-screen',s==='screen'||s==='mpc');
   if(s==='screen'){ if(!screenframe.src)screenframe.src='assets/y2k-os/index.html'; }
   else screenframe.classList.remove('show');
+  if(s==='mpc'){
+    if(!curMpc)curMpc=mpcUnits[0];   // same fallback camTarget() uses, so the iframe src always gets set
+    if(curMpc){
+      const want='assets/mpc/index.html#'+curMpc.song;
+      if(!mpcframe.getAttribute('src'))mpcframe.src=want;   // attribute, not resolved .src
+      else try{mpcframe.contentWindow.location.hash=curMpc.song;}catch(_){mpcframe.src=want;}
+      try{mpcframe.contentWindow.focus();}catch(_){}   // re-entry: hand keyboard back to the pads (app focuses itself on first load)
+    }
+  }
+  else{ mpcframe.classList.remove('show');   // left the MPC -> silence it (audio would keep playing over the room otherwise)
+    try{mpcframe.contentWindow&&mpcframe.contentWindow.__mpcStop&&mpcframe.contentWindow.__mpcStop();}catch(_){}
+  }
 }
-backchip.addEventListener('click',()=>setCam(camState==='screen'?'wide':'table'));
+backchip.addEventListener('click',()=>setCam(camState==='globe'?'table':'wide'));
 window._setCam=setCam;
-addEventListener('keydown',e=>{if(e.key==='Escape'&&(camState==='globe'||camState==='screen'))setCam(camState==='screen'?'wide':'table');});
+addEventListener('keydown',e=>{if(e.key==='Escape'&&focusStates.includes(camState))setCam(camState==='globe'?'table':'wide');});
 const CAM_ORDER=['wide','table','globe'];
 let wheelLock=0;
 addEventListener('wheel',e=>{
   const now=performance.now(); if(now-wheelLock<700)return; wheelLock=now;
-  if(camState==='screen'){setCam('wide');return;}   // wheel backs out of the monitor
+  if(camState==='screen'||camState==='mpc'){setCam('wide');return;}   // wheel backs out of a focus
   const i=CAM_ORDER.indexOf(camState);
   if(e.deltaY>0&&i<2)setCam(CAM_ORDER[i+1]);
   else if(e.deltaY<0&&i>0)setCam(CAM_ORDER[i-1]);
@@ -787,11 +812,15 @@ halo.position.copy(globe.position);globeGrp.add(halo);
 // click the globe -> globe close-up; click the Y2K monitor -> screen focus
 const gRay=new THREE.Raycaster(),gPv=new THREE.Vector2();
 addEventListener('pointerdown',e=>{
-  if(camState==='globe'||camState==='screen'||e.target.closest('button,header,iframe'))return;
+  if(camState!=='wide'&&camState!=='table')return;
+  if(e.target.closest('button,header,iframe'))return;
   gPv.set(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1);
   gRay.setFromCamera(gPv,camera);
   if(gRay.intersectObject(globe,false).length){setCam('globe');return;}
-  if(gRay.intersectObject(emScreen,false).length)setCam('screen');
+  if(gRay.intersectObject(emScreen,false).length){setCam('screen');return;}
+  for(const u of mpcUnits){ // click a machine (or its panel) -> that song's MPC
+    if(gRay.intersectObjects([u.obj,u.face],true).length){curMpc=u;setCam('mpc');return;}
+  }
 });
 
 // city blocks w/ LED windows around pedestal
@@ -853,20 +882,26 @@ const ledMesh=new THREE.Mesh(new THREE.PlaneGeometry(PW*S*.44,PW*S*.44*(420/760)
   new THREE.MeshBasicMaterial({map:ledTex,toneMapped:false}));
 ledMesh.position.set(PW*S*.27,.78,.006);back.add(ledMesh);
 
-/* big neon sign floating above on the back wall — the OTTI logo */
+/* big sign floating above on the back wall — the MSL (Make Sense Later Records) chrome logo */
 const [nsC,ns]=makeCanvas(760,640);
 const nsTex=ctex(nsC);
 function drawSign(img){
   ns.clearRect(0,0,760,640);
   if(img){
+    // key the near-black backdrop out via a soft luminance ramp — keeps the chrome, lets the
+    // bright metal edges glow in the dark room (the logo PNG is opaque, so we make our own alpha)
     const t=document.createElement('canvas');t.width=t.height=512;
     const tc=t.getContext('2d');
     tc.drawImage(img,0,0,512,512);
-    tc.globalCompositeOperation='source-in';         // tint the white mark neon green
-    tc.fillStyle='#a6ff45';tc.fillRect(0,0,512,512);
-    ns.shadowColor='#8dff1a';ns.shadowBlur=42;
-    ns.drawImage(t,124,-6,512,512);
-    ns.drawImage(t,124,-6,512,512);                  // double pass = hotter core
+    const id=tc.getImageData(0,0,512,512),d=id.data;
+    for(let i=0;i<d.length;i+=4){
+      const lum=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+      d[i+3]=Math.max(0,Math.min(255,(lum-8)/(30-8)*255));   // <8 transparent, >30 opaque
+    }
+    tc.putImageData(id,0,0);
+    ns.shadowColor='#cfe4ff';ns.shadowBlur=34;               // cool metallic glow, not green
+    ns.drawImage(t,124,96,512,512);
+    ns.drawImage(t,124,96,512,512);                           // double pass = hotter core (dropped so the top clears frame)
   }
   ns.textAlign='center';ns.font='34px Bungee, sans-serif';
   ns.shadowColor='#2be0e0';ns.shadowBlur=18;ns.fillStyle='#dffcff';
@@ -875,7 +910,7 @@ function drawSign(img){
 }
 const logoImg=new Image();
 logoImg.onload=()=>drawSign(logoImg);
-logoImg.src='Otti Transparent.png';
+logoImg.src='MSL-LOGO.PNG';
 drawSign(null);
 document.fonts.ready.then(()=>drawSign(logoImg.complete&&logoImg.naturalWidth?logoImg:null));
 const nsM=new THREE.MeshBasicMaterial({map:nsTex,transparent:true,toneMapped:false});
@@ -907,49 +942,19 @@ const deskLG=desk(-3.05,0.25,0.38,2.7,1.35);
 const deskRG=desk(2.95,0.0,-0.55,2.9,1.45);
 const TOP=-0.215;   // desk top surface (local y)
 
-/* left desk: pegboard wall, lamp, cutting mat, calculator, tools, bins */
+/* left desk: pegboard wall, lava lamp, MPC lineup, floor bins */
 const peg=new THREE.Mesh(new THREE.PlaneGeometry(2.3,2.5),
   new THREE.MeshStandardMaterial({map:pbTex,roughness:1,
     emissive:0xffffff,emissiveMap:pbTex,emissiveIntensity:.22})); // lighting is baked into the photo
 peg.position.set(-3.45,1.2,-1.55);peg.rotation.y=0.38;scene.add(peg);
-// cutting mat — dark grid like the reference
-const [cmC,cm]=makeCanvas(256,180);
-cm.fillStyle='#141419';cm.fillRect(0,0,256,180);
-cm.strokeStyle='#2e3138';cm.lineWidth=1;
-for(let x=0;x<=256;x+=24){cm.beginPath();cm.moveTo(x,0);cm.lineTo(x,180);cm.stroke();}
-for(let y=0;y<=180;y+=24){cm.beginPath();cm.moveTo(0,y);cm.lineTo(256,y);cm.stroke();}
-cm.strokeStyle='#4a4f5a';cm.strokeRect(12,12,232,156);
-const mat=new THREE.Mesh(new THREE.BoxGeometry(1.05,.012,.72),
-  new THREE.MeshStandardMaterial({map:ctex(cmC),roughness:.9}));
-mat.position.set(-.35,TOP+.006,.18);deskLG.add(mat);
-
-// MPC-style beat machine (light gray body, screen, 4x4 pads, accent buttons, knobs)
-const mpc=new THREE.Group();mpc.position.set(.55,TOP,-.22);mpc.rotation.y=0.15;deskLG.add(mpc);
-const mpcBody=new THREE.Mesh(new THREE.BoxGeometry(.4,.05,.5),
-  new THREE.MeshStandardMaterial({color:0xd8d5cc,roughness:.55}));
-mpcBody.position.y=.025;mpc.add(mpcBody);
-const mpcTop=new THREE.Mesh(new THREE.BoxGeometry(.4,.012,.13),
-  new THREE.MeshStandardMaterial({color:0x16161a,roughness:.4}));
-mpcTop.position.set(0,.055,-.185);mpc.add(mpcTop);
-const mpcScreen=new THREE.Mesh(new THREE.BoxGeometry(.14,.014,.09),
-  new THREE.MeshStandardMaterial({color:0x0a0a0a,emissive:0xffb020,emissiveIntensity:1.1,roughness:.3}));
-mpcScreen.position.set(0,.056,-.185);mpc.add(mpcScreen);
-const padM=new THREE.MeshStandardMaterial({color:0x9a9aa2,roughness:.6,emissive:0x2be0e0,emissiveIntensity:.12});
-for(let r=0;r<4;r++)for(let c=0;c<4;c++){
-  const p=new THREE.Mesh(new THREE.BoxGeometry(.062,.016,.062),padM);
-  p.position.set(-.115+c*.077,.058,-.075+r*.077);mpc.add(p);}
-[[-.165,-.11,0xff7a1a],[-.165,-.03,0xff7a1a],[.165,-.11,0x2b6be0],[.165,-.03,0x2b6be0],
- [.165,.13,0xd42222],[.165,.2,0x39c463]].forEach(([x,z,col])=>{
-  const b=new THREE.Mesh(new THREE.BoxGeometry(.045,.014,.028),
-    new THREE.MeshStandardMaterial({color:col,roughness:.45,emissive:col,emissiveIntensity:.3}));
-  b.position.set(x,.057,z);mpc.add(b);});
-[-.11,0,.11].forEach(x=>{
-  const k=new THREE.Mesh(new THREE.CylinderGeometry(.016,.018,.02,14),
-    new THREE.MeshStandardMaterial({color:0xe8e5dc,roughness:.4}));
-  k.position.set(x,.062,.2);mpc.add(k);});
+// The MPC lineup: three Higgsfield GLBs loaded via PROP_LIST (assets/props/mpc-*.glb),
+// each clickable -> camera dives to it and the playable app opens on that machine's song.
+// Each unit gets an invisible panel (fly-in target) built after its GLB grounds — see the loader.
+const MPC_SONG={'mpc-otti':'otti','mpc-power':'power','mpc-runaway':'runaway'};
+const mpcUnits=[]; let curMpc=null; const MPC_FW=0.92, MPC_FH=0.65;
 
 // lava lamp — glass cone, glowing magenta fluid, floating blobs (animated in the loop)
-const lava=new THREE.Group();lava.position.set(-1.0,TOP,-.42);deskLG.add(lava);
+const lava=new THREE.Group();lava.position.set(-1.15,TOP,.35);deskLG.add(lava);   // front-left; MPC row owns the back
 lava.add((()=>{const b=new THREE.Mesh(new THREE.CylinderGeometry(.05,.075,.09,20),
   new THREE.MeshStandardMaterial({color:0x2a2233,roughness:.3,metalness:.7}));b.position.y=.045;return b;})());
 const fluid=new THREE.Mesh(new THREE.CylinderGeometry(.028,.055,.3,20),
@@ -967,14 +972,6 @@ lava.add((()=>{const c=new THREE.Mesh(new THREE.CylinderGeometry(.012,.03,.06,16
 const lavaLight=new THREE.PointLight(0xff4ac0,3.5,1.8);
 lavaLight.position.set(0,.28,0);lava.add(lavaLight);
 window._lavaBlobs=lavaBlobs;
-// drumsticks on the mat
-const stickM=new THREE.MeshStandardMaterial({color:0xc9a066,roughness:.55});
-[[-.55,.12,.35],[-.3,.3,.18]].forEach(([x,z,ry])=>{
-  const t=new THREE.Group();t.position.set(x,TOP+.015,z);t.rotation.y=ry;deskLG.add(t);
-  const shaft=new THREE.Mesh(new THREE.CylinderGeometry(.008,.011,.32),stickM);
-  shaft.rotation.z=Math.PI/2;t.add(shaft);
-  const tip=new THREE.Mesh(new THREE.SphereGeometry(.011,10,8),stickM);
-  tip.position.x=-.17;t.add(tip);});
 // stacked storage bins on the floor by the pegboard
 const binM=new THREE.MeshStandardMaterial({color:0x2438c8,roughness:.55,emissive:0x2438c8,emissiveIntensity:.18});
 [[-4.25,-1.48,-0.55],[-3.82,-1.48,-0.72],[-4.05,-1.25,-0.63]].forEach(([x,y,z])=>{
@@ -1069,12 +1066,14 @@ if(dnEl)dnEl.addEventListener('click',()=>{skyTarget=skyTarget<0.5?1:0;dnEl.clas
 const gltfL=new GLTFLoader();
 const PROP_LIST=[
   // [file, parent, x, y, z, targetSize, rotY, rotX]
-  ['cassette',  deskLG,  .1,  TOP,  .32, .14,  0.6, -Math.PI/2],  // lying flat on the mat
-  ['pedal',     deskLG, -.95, TOP, -.1,  .18, -0.2, 0],
   ['mic',       deskRG,  .15, TOP, -.42, .34,  0.2, 0],
   ['speaker',   deskRG, -1.15,TOP, -.35, .38,  0.5, 0],
   ['speaker',   deskRG,  1.15,TOP, -.35, .38, -0.5, 0],   // mirrored on the right edge
   ['headphones',deskRG, -.75, TOP,  .3,  .28,  0.9, 0],
+  // the MPC lineup — three playable machines in a row across the back of the left desk
+  ['mpc-runaway',deskLG,-.78, TOP, -.38, .54, 0.1, 0],   // cream — RUNAWAY
+  ['mpc-power',  deskLG,-.10, TOP, -.38, .54, 0.0, 0],   // red — POWER
+  ['mpc-otti',   deskLG, .58, TOP, -.38, .54,-0.1, 0],   // black/neon — OTTI's own record
   ['panther',   scene, -2.75, floor.position.y, 0.75, 0.85, 0.7, 0],   // ~3ft statue under the LEFT desk
   ['warmachine',scene,  2.7,  floor.position.y, 0.55, 0.85, -0.7, 0],  // ~3ft statue under the RIGHT desk
 ];
@@ -1096,6 +1095,18 @@ PROP_LIST.forEach(([name,parent,x,y,z,size,ry,rx])=>{
     bb.setFromObject(o);
     o.position.set(x,y-bb.min.y,z);
     parent.add(o);
+    if(MPC_SONG[name]){
+      // invisible panel floating above the unit — the 'mpc' camera dives in along its normal
+      o.updateMatrixWorld(true);
+      const wb=new THREE.Box3().setFromObject(o), wc=wb.getCenter(new THREE.Vector3());
+      const face=new THREE.Mesh(new THREE.PlaneGeometry(MPC_FW,MPC_FH),
+        new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false}));
+      face.position.set(wc.x, wb.max.y+0.34, wb.max.z+0.22);
+      face.rotation.set(-0.32, deskLG.rotation.y, 0);   // tilt back a touch, yaw with the desk
+      scene.add(face);
+      mpcUnits.push({song:MPC_SONG[name],obj:o,face});
+      window._mpcUnits=mpcUnits;
+    }
   },undefined,()=>{});
 });
 
@@ -1287,6 +1298,17 @@ function loopBody(){
     st.left=minX+'px'; st.top=minY+'px';
     st.width=(maxX-minX)+'px'; st.height=(maxY-minY)+'px';
     if(camCur.pos.distanceTo(ct.pos)<0.09)screenframe.classList.add('show');
+  }
+
+  // MPC: the app presents as a large centered panel (like a real MPC taking over the screen);
+  // the camera dive toward the unit is the transition. Aspect matches the app's faceplate.
+  if(camState==='mpc'){
+    const aspect=MPC_FW/MPC_FH;
+    const w=Math.min(innerWidth*0.94, innerHeight*0.92*aspect), h=w/aspect;
+    const st=mpcframe.style;
+    st.left=Math.round((innerWidth-w)/2)+'px'; st.top=Math.round((innerHeight-h)/2)+'px';
+    st.width=Math.round(w)+'px'; st.height=Math.round(h)+'px';
+    if(camCur.pos.distanceTo(ct.pos)<0.3)mpcframe.classList.add('show');
   }
 
   composer.render();
