@@ -336,6 +336,7 @@ function setCam(s){
       const want='assets/mpc/index.html#'+curMpc.song;
       if(!mpcframe.getAttribute('src'))mpcframe.src=want;   // attribute, not resolved .src
       else try{mpcframe.contentWindow.location.hash=curMpc.song;}catch(_){mpcframe.src=want;}
+      try{mpcframe.contentWindow.focus();}catch(_){}   // re-entry: hand keyboard back to the pads (app focuses itself on first load)
     }
   }
   else{ mpcframe.classList.remove('show');   // left the MPC -> silence it (audio would keep playing over the room otherwise)

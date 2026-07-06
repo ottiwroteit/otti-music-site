@@ -423,7 +423,11 @@ addEventListener('hashchange',build);
 build();
 
 addEventListener('keydown',e=>{
-  if(e.key==='Escape'){try{parent.__mpcExit&&parent.__mpcExit();}catch(_){}return;}
+  if(e.key==='Escape'){
+    const pop=document.getElementById('pop');
+    if(pop.classList.contains('show')){pop.classList.remove('show');return;}  // close info popup first
+    try{parent.__mpcExit&&parent.__mpcExit();}catch(_){}return;
+  }
   if(e.repeat)return;const p=byKey[e.key.toUpperCase()];if(p)press(p);
 });
 addEventListener('keyup',e=>{const p=byKey[e.key.toUpperCase()];if(p)release(p);});
