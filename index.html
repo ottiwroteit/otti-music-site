@@ -72,7 +72,7 @@
   #arcframe{background:#050508;border-radius:12px;box-shadow:0 0 60px rgba(60,140,255,.25),0 20px 60px rgba(0,0,0,.75)}
   #screenframe.show,#mpcframe.show,#arcframe.show{opacity:1;pointer-events:auto}
   body.in-screen #playbtn,body.in-screen .hint{display:none}
-  #arcchip{position:fixed;left:18px;top:50%;transform:translateY(-50%);z-index:11;display:none;
+  #arcchip{position:fixed;left:18px;top:72px;z-index:11;display:none;   /* top-left, OUT of the flipper tap zones */
     font-family:var(--mono);font-size:12px;color:#dffcff;background:rgba(10,8,14,.75);
     border:1px solid rgba(102,183,255,.45);border-radius:999px;padding:9px 15px;cursor:pointer;
     backdrop-filter:blur(4px);letter-spacing:.06em;box-shadow:0 0 18px rgba(102,183,255,.25)}
@@ -1054,16 +1054,10 @@ const arcUnits=[]; let curArc=null;
   sunL.position.set(AX-3,7,AZ+5);sunL.target.position.set(AX+1,-1.6,AZ-2);wing.add(sunL,sunL.target);
   const rowWash=new THREE.PointLight(0xe8eef8,13,8);                  // dedicated wash on the cabinet row
   rowWash.position.set(AX-1.5,2.2,AZ-1.6);wing.add(rowWash);
-  // "OTTI ARCADE" wall sign (canvas, brand green)
-  const [asC,as]=makeCanvas(512,128);
-  as.fillStyle='rgba(0,0,0,0)';as.clearRect(0,0,512,128);
-  as.font='bold 64px Bungee, sans-serif';as.textAlign='center';
-  as.shadowColor='#8dff1a';as.shadowBlur=26;as.fillStyle='#c8ff7a';
-  as.fillText('OTTI ARCADE',256,84);
-  const asTex=ctex(asC);
-  const asMesh=new THREE.Mesh(new THREE.PlaneGeometry(3.4,.85),
-    new THREE.MeshBasicMaterial({map:asTex,transparent:true,toneMapped:false}));
-  asMesh.position.set(AX,3.1,AZ-4.38);wing.add(asMesh);
+  // MSL chrome sign on the hall wall — reuses the studio sign's keyed canvas texture (nsM),
+  // so both signs share one master and stay identical if the logo changes.
+  const asMesh=new THREE.Mesh(new THREE.PlaneGeometry(2.7,2.7*640/760),nsM);
+  asMesh.position.set(AX,2.95,AZ-4.38);wing.add(asMesh);
 
   /* ---- procedural cabinet builder ---- */
   const CAB_DEFS=[ // [game, title, bodyCol, trimCol, tintCss, gunCols]
