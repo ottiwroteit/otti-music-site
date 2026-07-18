@@ -66,11 +66,17 @@
   #backchip.show{display:block}
   #backchip kbd{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:0 5px}
   /* live web app on the earth-horizon monitor — positioned over its projected screen rect */
-  #screenframe,#mpcframe{position:fixed;z-index:9;border:0;background:#000;opacity:0;pointer-events:none;
+  #screenframe,#mpcframe,#arcframe{position:fixed;z-index:9;border:0;background:#000;opacity:0;pointer-events:none;
     transition:opacity .25s ease;box-shadow:0 0 40px rgba(0,0,0,.6)}
   #mpcframe{background:#0a0404;border-radius:14px;box-shadow:0 0 60px rgba(200,20,20,.35),0 20px 60px rgba(0,0,0,.7)}
-  #screenframe.show,#mpcframe.show{opacity:1;pointer-events:auto}
+  #arcframe{background:#050508;border-radius:12px;box-shadow:0 0 60px rgba(60,140,255,.25),0 20px 60px rgba(0,0,0,.75)}
+  #screenframe.show,#mpcframe.show,#arcframe.show{opacity:1;pointer-events:auto}
   body.in-screen #playbtn,body.in-screen .hint{display:none}
+  #arcchip{position:fixed;left:18px;top:50%;transform:translateY(-50%);z-index:11;display:none;
+    font-family:var(--mono);font-size:12px;color:#dffcff;background:rgba(10,8,14,.75);
+    border:1px solid rgba(102,183,255,.45);border-radius:999px;padding:9px 15px;cursor:pointer;
+    backdrop-filter:blur(4px);letter-spacing:.06em;box-shadow:0 0 18px rgba(102,183,255,.25)}
+  #arcchip.show{display:block}
   @media (max-width:520px){ .livepill{font-size:9px;padding:5px 9px;gap:5px} .livepill .brand{font-size:10px} .cta{font-size:10px;padding:8px 11px} }
 </style>
 </head>
@@ -87,6 +93,8 @@
 <button id="backchip">Go Back <kbd>ESC</kbd></button>
 <iframe id="screenframe" title="Y2K Desktop OS" loading="lazy"></iframe>
 <iframe id="mpcframe" title="OTTI MPC2000XL" loading="lazy" allow="autoplay"></iframe>
+<iframe id="arcframe" title="OTTI ARCADE" loading="lazy" allow="autoplay"></iframe>
+<button id="arcchip">&#9664; ARCADE</button>
 <div class="hint"><kbd>&larr;</kbd><kbd>&rarr;</kbd> flippers · <kbd>Space</kbd> launch · mobile: tap sides</div>
 
 <script>
@@ -286,6 +294,7 @@ frameCamera();
 const CAMS={
   wide: {pos:[0.3,3.4,5.15], look:[0,0.22,-0.42], fov:47, ppos:[0,3.55,5.7], plook:[0,0.46,-0.42], pfov:63},
   table:{pos:[0.15,3.0,3.15],look:[0,0.0,-0.3], fov:46, ppos:[0,3.25,3.5],plook:[0,-0.05,-0.3],pfov:60},
+  arcade:{pos:[-4.9,1.9,3.6], look:[-9.6,0.5,-1.8], fov:52, ppos:[-4.2,2.3,4.8], plook:[-9.6,0.8,-1.8], pfov:68}, // warehouse wing, left of the studio
 };
 let camState='wide';
 const camCur={pos:new THREE.Vector3(),look:new THREE.Vector3(),fov:46};
@@ -313,21 +322,34 @@ function camTarget(){
     const dist=portrait?2.05:1.15, fov=portrait?60:42;
     return {pos:_gw.clone().addScaledVector(_sn,dist),look:_gw.clone(),fov};
   }
+  if(camState==='arc'&&(curArc||arcUnits[0])){ // head-on at the clicked arcade cabinet's screen
+    if(!curArc)curArc=arcUnits[0];
+    curArc.face.getWorldPosition(_gw);
+    curArc.face.getWorldQuaternion(_sq);
+    _sn.set(0,0,1).applyQuaternion(_sq);
+    const dist=portrait?2.3:1.25, fov=portrait?58:42;
+    return {pos:_gw.clone().addScaledVector(_sn,dist),look:_gw.clone(),fov};
+  }
   const c=CAMS[camState]||CAMS.wide;   // unknown/unready state never crashes the loop
   return portrait
     ? {pos:new THREE.Vector3(...c.ppos),look:new THREE.Vector3(...c.plook),fov:c.pfov}
     : {pos:new THREE.Vector3(...c.pos), look:new THREE.Vector3(...c.look), fov:c.fov};
 }
 const backchip=document.getElementById('backchip');
+const arcchip=document.getElementById('arcchip');
 const screenframe=document.getElementById('screenframe');
 const mpcframe=document.getElementById('mpcframe');
-const focusStates=['globe','screen','mpc'];
-window.__mpcExit=()=>setCam('wide');   // the MPC app calls this on ESC
+const arcframe=document.getElementById('arcframe');
+const focusStates=['globe','screen','mpc','arc'];
+window.__mpcExit=()=>setCam('wide');    // the MPC app calls this on ESC
+window.__arcExit=()=>setCam('arcade');  // an arcade game calls this on ESC -> back to the wing
+function backTarget(){return camState==='globe'?'table':camState==='arc'?'arcade':'wide';}
 function setCam(s){
   camState=s;
-  backchip.classList.toggle('show',focusStates.includes(s));
-  window.__inScreen=(s==='screen'||s==='mpc'); // pinball input guard (classic script reads this)
-  document.body.classList.toggle('in-screen',s==='screen'||s==='mpc');
+  backchip.classList.toggle('show',focusStates.includes(s)||s==='arcade');
+  arcchip.classList.toggle('show',s==='wide'||s==='table');
+  window.__inScreen=(s==='screen'||s==='mpc'||s==='arc'||s==='arcade'); // pinball input guard (classic script reads this)
+  document.body.classList.toggle('in-screen',s==='screen'||s==='mpc'||s==='arc'||s==='arcade');
   if(s==='screen'){ if(!screenframe.src)screenframe.src='assets/y2k-os/index.html'; }
   else screenframe.classList.remove('show');
   if(s==='mpc'){
@@ -342,20 +364,37 @@ function setCam(s){
   else{ mpcframe.classList.remove('show');   // left the MPC -> silence it (audio would keep playing over the room otherwise)
     try{mpcframe.contentWindow&&mpcframe.contentWindow.__mpcStop&&mpcframe.contentWindow.__mpcStop();}catch(_){}
   }
+  if(s==='arc'){
+    if(!curArc)curArc=arcUnits[0];   // same fallback camTarget() uses
+    if(curArc){
+      // query differs per game -> guarantees a REAL reload (hash-only changes are fragment
+      // navigations and the engine reads its hash once at load)
+      const want='assets/arcade/index.html?g='+curArc.game+'#'+curArc.game;
+      if(arcframe.getAttribute('src')!==want)arcframe.src=want;
+      try{arcframe.contentWindow.focus();}catch(_){}
+    }
+  }
+  else{ arcframe.classList.remove('show');   // left the cabinet -> silence the game
+    try{arcframe.contentWindow&&arcframe.contentWindow.__arcStop&&arcframe.contentWindow.__arcStop();}catch(_){}
+  }
 }
-backchip.addEventListener('click',()=>setCam(camState==='globe'?'table':'wide'));
+backchip.addEventListener('click',()=>setCam(backTarget()));
+arcchip.addEventListener('click',()=>setCam('arcade'));
 window._setCam=setCam;
-addEventListener('keydown',e=>{if(e.key==='Escape'&&focusStates.includes(camState))setCam(camState==='globe'?'table':'wide');});
+addEventListener('keydown',e=>{if(e.key==='Escape'&&(focusStates.includes(camState)||camState==='arcade'))setCam(backTarget());});
 const CAM_ORDER=['wide','table','globe'];
 let wheelLock=0;
 addEventListener('wheel',e=>{
   const now=performance.now(); if(now-wheelLock<700)return; wheelLock=now;
   if(camState==='screen'||camState==='mpc'){setCam('wide');return;}   // wheel backs out of a focus
+  if(camState==='arc'){setCam('arcade');return;}
+  if(camState==='arcade'){setCam('wide');return;}
   const i=CAM_ORDER.indexOf(camState);
   if(e.deltaY>0&&i<2)setCam(CAM_ORDER[i+1]);
   else if(e.deltaY<0&&i>0)setCam(CAM_ORDER[i-1]);
 },{passive:true});
 {const t0=camTarget();camCur.pos.copy(t0.pos);camCur.look.copy(t0.look);camCur.fov=t0.fov;}
+arcchip.classList.add('show');   // visible from the initial wide view
 
 /* lights — base scene must read with bloom off */
 scene.add(new THREE.AmbientLight(0x30204a,1.0)); // env map carries fill now
@@ -812,10 +851,16 @@ halo.position.copy(globe.position);globeGrp.add(halo);
 // click the globe -> globe close-up; click the Y2K monitor -> screen focus
 const gRay=new THREE.Raycaster(),gPv=new THREE.Vector2();
 addEventListener('pointerdown',e=>{
-  if(camState!=='wide'&&camState!=='table')return;
+  if(camState!=='wide'&&camState!=='table'&&camState!=='arcade')return;
   if(e.target.closest('button,header,iframe'))return;
   gPv.set(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1);
   gRay.setFromCamera(gPv,camera);
+  if(camState==='arcade'){ // in the wing: cabinets are the only click targets
+    for(const u of arcUnits){
+      if(gRay.intersectObjects([u.obj,u.face],true).length){curArc=u;setCam('arc');return;}
+    }
+    return;
+  }
   if(gRay.intersectObject(globe,false).length){setCam('globe');return;}
   if(gRay.intersectObject(emScreen,false).length){setCam('screen');return;}
   for(const u of mpcUnits){ // click a machine (or its panel) -> that song's MPC
@@ -920,9 +965,206 @@ nsMesh.position.set(0,2.3,-(PH*S/2)-0.6);scene.add(nsMesh);
 const floor=new THREE.Mesh(new THREE.PlaneGeometry(30,30),
   new THREE.MeshStandardMaterial({color:0x0b0714,roughness:.85}));
 floor.rotation.x=-Math.PI/2;floor.position.y=-1.6;scene.add(floor);
-const backWall=new THREE.Mesh(new THREE.PlaneGeometry(30,12),
+const backWall=new THREE.Mesh(new THREE.PlaneGeometry(20.8,12),   // stops at the arcade wing so the hall shows through
   new THREE.MeshStandardMaterial({color:0x0e0818,roughness:.95}));
-backWall.position.set(0,3,-(PH*S/2)-1.1);scene.add(backWall);
+backWall.position.set(4.9,3,-(PH*S/2)-1.1);scene.add(backWall);
+const cornerPillar=new THREE.Mesh(new THREE.BoxGeometry(.5,7,.5),
+  new THREE.MeshStandardMaterial({color:0x181420,roughness:.8}));
+cornerPillar.position.set(-5.55,1.9,-(PH*S/2)-1.05);scene.add(cornerPillar);   // deliberate studio->arcade transition edge
+
+/* ================================================================
+   ARCADE WING — warehouse hall left of the studio (from OTTI's
+   reference video): truss + skylight ceiling, a row of light-gun
+   cabinets, the Gundam-style cockpit centerpiece. Every cabinet is
+   clickable -> camera dives -> assets/arcade/index.html#<game>.
+   ================================================================ */
+const arcUnits=[]; let curArc=null;
+{
+  const AX=-9.7, AZ=0.2;                        // wing center
+  const wing=new THREE.Group();scene.add(wing);
+  // concrete slab (slightly above the studio floor to avoid z-fighting)
+  const slab=new THREE.Mesh(new THREE.PlaneGeometry(11.5,9),
+    new THREE.MeshStandardMaterial({color:0x33363e,roughness:.5,metalness:.25}));
+  slab.rotation.x=-Math.PI/2;slab.position.set(AX,-1.595,AZ);wing.add(slab);
+  // hall walls (light corrugated look via subtle stripes canvas)
+  const [wwC,ww]=makeCanvas(256,128);
+  ww.fillStyle='#585c66';ww.fillRect(0,0,256,128);
+  ww.fillStyle='rgba(255,255,255,.06)';for(let x=0;x<256;x+=16)ww.fillRect(x,0,7,128);
+  const wallTex=ctex(wwC);wallTex.wrapS=wallTex.wrapT=THREE.RepeatWrapping;wallTex.repeat.set(6,2);
+  const wallM=new THREE.MeshStandardMaterial({map:wallTex,roughness:.9});
+  const wBack=new THREE.Mesh(new THREE.PlaneGeometry(11.5,6.4),wallM);
+  wBack.position.set(AX,1.6,AZ-4.4);wing.add(wBack);
+  const wEnd=new THREE.Mesh(new THREE.PlaneGeometry(9,6.4),wallM);
+  wEnd.rotation.y=Math.PI/2;wEnd.position.set(AX-5.7,1.6,AZ);wing.add(wEnd);
+  // truss ceiling + glowing skylight panels (the video's hangar roof)
+  const beamM=new THREE.MeshStandardMaterial({color:0x14161c,roughness:.6,metalness:.5});
+  for(let i=0;i<6;i++){
+    const beam=new THREE.Mesh(new THREE.BoxGeometry(.14,.26,8.8),beamM);
+    beam.position.set(AX-5+i*2,4.05,AZ);wing.add(beam);
+  }
+  const spine=new THREE.Mesh(new THREE.BoxGeometry(11.4,.2,.2),beamM);
+  spine.position.set(AX,4.15,AZ);wing.add(spine);
+  const skyM=new THREE.MeshBasicMaterial({color:0x9cc8ee,toneMapped:false});
+  skyM.color.multiplyScalar(.5);                 // under the bloom knee, still reads as daylight
+  for(let i=0;i<5;i++)for(let j=0;j<3;j++){
+    const p=new THREE.Mesh(new THREE.PlaneGeometry(1.5,2.2),skyM);
+    p.rotation.x=Math.PI/2;p.position.set(AX-4+i*2,4.12,AZ-2.7+j*2.7);wing.add(p);
+  }
+  const ceil=new THREE.Mesh(new THREE.PlaneGeometry(11.5,9),
+    new THREE.MeshStandardMaterial({color:0x0c0e13,roughness:.95,side:THREE.DoubleSide}));
+  ceil.rotation.x=Math.PI/2;ceil.position.set(AX,4.2,AZ);wing.add(ceil);
+  // cool daylight spill so the hall reads differently from the neon studio
+  [[-3.8,0,30],[-1.2,.6,26],[1.6,0,26],[4.2,.4,24]].forEach(([dx,dz,pw])=>{
+    const L=new THREE.PointLight(0xcfe0f4,pw,11);L.position.set(AX+dx,3.5,AZ+dz);wing.add(L);
+  });
+  const rowWash=new THREE.PointLight(0xdfe8f4,20,8);  // dedicated wash on the cabinet row
+  rowWash.position.set(AX-1.5,2.2,AZ-1.6);wing.add(rowWash);
+  // "OTTI ARCADE" wall sign (canvas, brand green)
+  const [asC,as]=makeCanvas(512,128);
+  as.fillStyle='rgba(0,0,0,0)';as.clearRect(0,0,512,128);
+  as.font='bold 64px Bungee, sans-serif';as.textAlign='center';
+  as.shadowColor='#8dff1a';as.shadowBlur=26;as.fillStyle='#c8ff7a';
+  as.fillText('OTTI ARCADE',256,84);
+  const asTex=ctex(asC);
+  const asMesh=new THREE.Mesh(new THREE.PlaneGeometry(3.4,.85),
+    new THREE.MeshBasicMaterial({map:asTex,transparent:true,toneMapped:false}));
+  asMesh.position.set(AX,3.1,AZ-4.38);wing.add(asMesh);
+
+  /* ---- procedural cabinet builder ---- */
+  const CAB_DEFS=[ // [game, title, bodyCol, trimCol, tintCss, gunCols]
+    ['vcop2',     'ARCADE COP 2',   0xd8d0c0, 0xe8c020, '#ffd23d', [0x2b6be0,0xe84040]],
+    ['vcop3',     'ARCADE COP 3',   0x101318, 0x2b6be0, '#66b7ff', [0x2b6be0,0xff9a3d]],
+    ['lostworld', 'THE LOST LAND',  0x0d1410, 0x39c463, '#39c463', [0xff9a3d,0x39c463]],
+    ['lostworld', 'THE LOST LAND',  0x1a0f10, 0xc03028, '#ff6a50', [0x2b6be0,0x39c463]], // red deluxe twin (same game, like real arcades)
+    ['machinegun','SKYFIRE GUNNER', 0x8f1a1a, 0x1a1114, '#ff5050', [0xd0d4dc,0xd0d4dc]],
+    ['hotd',      'HOUSE OF THE UNDEAD',0x14101c,0x8dff1a,'#8dff1a',[0xe84040,0x2b6be0]],
+    ['buckhunter','BIG RACK HUNTER',0x2a1a0c, 0xff9a3d, '#ff9a3d', [0xff7a1a,0xff7a1a]],
+    ['redgun',    'RED GUN RANGE',  0xc8b020, 0xc03028, '#ffd23d', [0xe84040,0xe84040]],
+  ];
+  function cabScreenTex(title,tint){
+    const [c,x]=makeCanvas(256,180);
+    x.fillStyle='#04050a';x.fillRect(0,0,256,180);
+    x.strokeStyle=tint;x.lineWidth=4;x.strokeRect(8,8,240,164);
+    x.font='bold 26px "Courier New",monospace';x.textAlign='center';
+    x.shadowColor=tint;x.shadowBlur=14;x.fillStyle=tint;
+    const words=title.split(' ');
+    words.forEach((w2,i)=>x.fillText(w2,128,60+i*30));
+    x.shadowBlur=0;x.fillStyle='#fff';x.font='14px "Courier New",monospace';
+    x.fillText('INSERT COIN',128,152);
+    return ctex(c);
+  }
+  function cabSideTex(title,tint){
+    const [c,x]=makeCanvas(128,256);
+    x.fillStyle='#0a0b10';x.fillRect(0,0,128,256);
+    x.fillStyle=tint;x.globalAlpha=.16;
+    x.beginPath();x.moveTo(0,256);x.lineTo(128,40);x.lineTo(128,256);x.fill();x.globalAlpha=1;
+    x.save();x.translate(64,128);x.rotate(-Math.PI/2);
+    x.font='bold 20px "Courier New",monospace';x.textAlign='center';
+    x.shadowColor=tint;x.shadowBlur=10;x.fillStyle=tint;
+    x.fillText(title.slice(0,14),0,7);x.restore();
+    return ctex(c);
+  }
+  function buildCab(def,x,z,ry){
+    const [game,title,bodyCol,trimCol,tint,guns]=def;
+    const grp=new THREE.Group();grp.position.set(x,-1.6,z);grp.rotation.y=ry;wing.add(grp);
+    const bodyM=new THREE.MeshStandardMaterial({color:bodyCol,roughness:.55});
+    const trimM=new THREE.MeshStandardMaterial({color:trimCol,roughness:.4,emissive:trimCol,emissiveIntensity:.25});
+    const base=new THREE.Mesh(new THREE.BoxGeometry(.62,1.02,.6),bodyM);base.position.y=.51;grp.add(base);
+    const head=new THREE.Mesh(new THREE.BoxGeometry(.62,.6,.5),bodyM);head.position.set(0,1.32,-.05);grp.add(head);
+    const marq=new THREE.Mesh(new THREE.BoxGeometry(.64,.18,.34),trimM);
+    marq.position.set(0,1.68,.02);marq.rotation.x=-.28;grp.add(marq);
+    const marqFace=new THREE.Mesh(new THREE.PlaneGeometry(.6,.14),
+      new THREE.MeshBasicMaterial({map:cabScreenTex(title,tint),toneMapped:false}));
+    marqFace.material.color.setScalar(.8);
+    marqFace.position.set(0,1.7,.195);marqFace.rotation.x=-.28;grp.add(marqFace);
+    const scr=new THREE.Mesh(new THREE.PlaneGeometry(.5,.36),
+      new THREE.MeshBasicMaterial({map:cabScreenTex(title,tint),toneMapped:false}));
+    scr.material.color.setScalar(.72);            // bloom-knee dimming (house rule)
+    scr.position.set(0,1.32,.206);grp.add(scr);
+    const deck=new THREE.Mesh(new THREE.BoxGeometry(.62,.1,.3),bodyM);
+    deck.position.set(0,1.0,.28);deck.rotation.x=.18;grp.add(deck);
+    // side art both flanks
+    const sTex=cabSideTex(title,tint);
+    [-1,1].forEach(s=>{
+      const side=new THREE.Mesh(new THREE.PlaneGeometry(.58,1.5),
+        new THREE.MeshStandardMaterial({map:sTex,roughness:.7,emissive:0xffffff,emissiveMap:sTex,emissiveIntensity:.14}));
+      side.rotation.y=s*Math.PI/2;side.position.set(s*.312,.9,-.02);grp.add(side);
+    });
+    // holstered light guns + coiled cable feel (two small L-shapes)
+    guns.forEach((gc,i)=>{
+      const gm=new THREE.MeshStandardMaterial({color:gc,roughness:.4});
+      const gb=new THREE.Mesh(new THREE.BoxGeometry(.05,.05,.16),gm);
+      gb.position.set(-.15+i*.3,1.07,.42);grp.add(gb);
+      const gh=new THREE.Mesh(new THREE.BoxGeometry(.045,.1,.05),gm);
+      gh.position.set(-.15+i*.3,1.0,.47);gh.rotation.x=.5;grp.add(gh);
+    });
+    // invisible fly-in panel floating at the screen
+    const face=new THREE.Mesh(new THREE.PlaneGeometry(1.0,.72),
+      new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false}));
+    face.position.set(x+Math.sin(ry)*.5,-1.6+1.30,z+Math.cos(ry)*.5);
+    face.rotation.y=ry;scene.add(face);
+    arcUnits.push({game,title,obj:grp,face});
+    return grp;
+  }
+  // the row along the back wall (video order), Gundam cockpit at the end
+  const rowX0=AX-4.9, gap=1.02, rowZ=AZ-3.7;
+  CAB_DEFS.slice(0,7).forEach((def,i)=>buildCab(def,rowX0+i*gap,rowZ,0));
+  buildCab(CAB_DEFS[7],AX-5.35,AZ+1.4,Math.PI/2);  // RED GUN RANGE on the end wall
+
+  /* ---- Gundam-style cockpit centerpiece (FINAL SHOT) ---- */
+  {
+    const grp=new THREE.Group();grp.position.set(rowX0+7*gap+.45,-1.6,rowZ+.35);wing.add(grp);
+    const whiteM=new THREE.MeshStandardMaterial({color:0xdde0e4,roughness:.35,metalness:.25});
+    const darkM=new THREE.MeshStandardMaterial({color:0x22252c,roughness:.5});
+    const base=new THREE.Mesh(new THREE.BoxGeometry(1.3,.5,1.0),whiteM);base.position.y=.25;grp.add(base);
+    const seatCol=new THREE.Mesh(new THREE.BoxGeometry(.34,.55,.6),darkM);seatCol.position.set(0,.62,.15);grp.add(seatCol);
+    [-1,1].forEach(s=>{ // grip rails
+      const rail=new THREE.Mesh(new THREE.BoxGeometry(.3,.5,.66),whiteM);
+      rail.position.set(s*.45,.72,.12);grp.add(rail);
+      const grip=new THREE.Mesh(new THREE.BoxGeometry(.06,.2,.06),darkM);
+      grip.position.set(s*.42,1.05,.3);grip.rotation.x=.4;grp.add(grip);
+    });
+    const tower=new THREE.Mesh(new THREE.BoxGeometry(1.05,1.5,.5),whiteM);tower.position.set(0,1.45,-.32);grp.add(tower);
+    const bezel=new THREE.Mesh(new THREE.BoxGeometry(.86,.62,.06),darkM);bezel.position.set(0,1.62,-.04);grp.add(bezel);
+    const [gsC,gs]=makeCanvas(256,180);
+    gs.fillStyle='#020408';gs.fillRect(0,0,256,180);
+    gs.font='bold 30px "Courier New",monospace';gs.textAlign='center';
+    gs.shadowColor='#ffd23d';gs.shadowBlur=16;gs.fillStyle='#ffd23d';
+    gs.fillText('FINAL',128,72);gs.fillText('SHOT',128,108);
+    gs.shadowBlur=0;gs.fillStyle='#fff';gs.font='13px "Courier New",monospace';
+    gs.fillText('PUSH START BUTTON',128,150);
+    const gscr=new THREE.Mesh(new THREE.PlaneGeometry(.78,.55),
+      new THREE.MeshBasicMaterial({map:ctex(gsC),toneMapped:false}));
+    gscr.material.color.setScalar(.72);
+    gscr.position.set(0,1.62,0);grp.add(gscr);
+    // stylized mecha head on top: matte head + dim amber eye slit + red chin + V-fin
+    const headM=new THREE.MeshStandardMaterial({color:0x9ba1a8,roughness:.7,metalness:.1}); // matte so bloom doesn't blow it out
+    const hd=new THREE.Mesh(new THREE.BoxGeometry(.4,.3,.34),headM);hd.position.set(0,2.42,-.3);grp.add(hd);
+    const eye=new THREE.Mesh(new THREE.BoxGeometry(.3,.06,.02),
+      new THREE.MeshBasicMaterial({color:0xffc030,toneMapped:false}));
+    eye.material.color.multiplyScalar(.45);eye.position.set(0,2.44,-.12);grp.add(eye);
+    const chin=new THREE.Mesh(new THREE.BoxGeometry(.1,.12,.06),
+      new THREE.MeshStandardMaterial({color:0xc03028,roughness:.6}));
+    chin.position.set(0,2.3,-.1);grp.add(chin);
+    [-1,1].forEach(s=>{
+      const fin=new THREE.Mesh(new THREE.BoxGeometry(.34,.05,.03),
+        new THREE.MeshStandardMaterial({color:0xb08a1c,roughness:.6,metalness:.15}));
+      fin.position.set(s*.2,2.6,-.14);fin.rotation.z=s*.55;grp.add(fin);
+    });
+    const crest=new THREE.Mesh(new THREE.BoxGeometry(.05,.16,.03),
+      new THREE.MeshStandardMaterial({color:0xc03028,roughness:.4}));
+    crest.position.set(0,2.62,-.14);grp.add(crest);
+    const face=new THREE.Mesh(new THREE.PlaneGeometry(1.35,.95),
+      new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false}));
+    face.position.set(rowX0+7*gap+.45,-1.6+1.62,rowZ+.35+.75);
+    scene.add(face);
+    arcUnits.push({game:'gundam',title:'FINAL SHOT',obj:grp,face});
+  }
+  window._arcUnits=arcUnits;
+  window._arcProj=i=>{const u=arcUnits[i],v=new THREE.Vector3();u.face.getWorldPosition(v);v.project(camera);
+    return {x:(v.x+1)/2*innerWidth,y:(1-v.y)/2*innerHeight,game:u.game,behind:v.z>1};}; // test hook: screen coords of a cabinet's face
+  window._arcSelect=i=>{curArc=arcUnits[i];setCam('arc');}; // test hook: enter a cabinet like a click would
+}
 
 /* ---- workstations: grounded desks with legs (nothing floats) ---- */
 const deskM=new THREE.MeshStandardMaterial({color:0x14101e,roughness:.7});
@@ -1308,6 +1550,16 @@ function loopBody(){
     if(camCur.pos.distanceTo(ct.pos)<0.3)mpcframe.classList.add('show');
   }
 
+  // Arcade cabinet: same centered-panel treatment, 16:9 like the game canvas.
+  if(camState==='arc'){
+    const aspect=960/540;
+    const w=Math.min(innerWidth*0.94, innerHeight*0.9*aspect), h=w/aspect;
+    const st=arcframe.style;
+    st.left=Math.round((innerWidth-w)/2)+'px'; st.top=Math.round((innerHeight-h)/2)+'px';
+    st.width=Math.round(w)+'px'; st.height=Math.round(h)+'px';
+    if(camCur.pos.distanceTo(ct.pos)<1.0)arcframe.classList.add('show');   // longer hall travel -> fade in on approach
+  }
+
   composer.render();
 }
 loop();
@@ -1324,6 +1576,12 @@ if(location.hash==='#selftest'){
   startGame();A(game.state==='playing'&&game.score===0&&game.balls===3,'reset');
   const n0=arcPool.length;spawnArc(...randomTxPair());A(arcPool.length===Math.min(n0+1,26),'arc spawn');
   const f0=stats.fans;fireTx();A(stats.fans>f0,'tx updates counters');
+  A(arcUnits.length===9,'arcade units built');
+  A(arcUnits.every(u=>u.face&&u.obj&&u.game),'arcade unit shape');
+  A(new Set(arcUnits.map(u=>u.game)).size===8,'8 distinct games');
+  A(!!CAMS.arcade,'arcade cam state');
+  setCam('arcade');A(camState==='arcade','enter arcade');
+  setCam('wide');A(camState==='wide','exit arcade');
   console.log('SELFTEST OK');
 }
 </script>
