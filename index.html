@@ -983,41 +983,76 @@ const arcUnits=[]; let curArc=null;
   const AX=-9.7, AZ=0.2;                        // wing center
   const wing=new THREE.Group();scene.add(wing);
   // concrete slab (slightly above the studio floor to avoid z-fighting)
+  // glossy sealed-concrete slab — sheen comes from the scene envmap, no extra render pass
   const slab=new THREE.Mesh(new THREE.PlaneGeometry(11.5,9),
-    new THREE.MeshStandardMaterial({color:0x33363e,roughness:.5,metalness:.25}));
+    new THREE.MeshStandardMaterial({color:0x42464f,roughness:.26,metalness:.35,envMapIntensity:.9}));
   slab.rotation.x=-Math.PI/2;slab.position.set(AX,-1.595,AZ);wing.add(slab);
-  // hall walls (light corrugated look via subtle stripes canvas)
-  const [wwC,ww]=makeCanvas(256,128);
-  ww.fillStyle='#585c66';ww.fillRect(0,0,256,128);
-  ww.fillStyle='rgba(255,255,255,.06)';for(let x=0;x<256;x+=16)ww.fillRect(x,0,7,128);
-  const wallTex=ctex(wwC);wallTex.wrapS=wallTex.wrapT=THREE.RepeatWrapping;wallTex.repeat.set(6,2);
-  const wallM=new THREE.MeshStandardMaterial({map:wallTex,roughness:.9});
+  // bright corrugated walls (vertical ribs with shaded flanks, girt lines, darker skirt)
+  const [wwC,ww]=makeCanvas(256,256);
+  const wg=ww.createLinearGradient(0,0,0,256);wg.addColorStop(0,'#8a909c');wg.addColorStop(1,'#6a707c');
+  ww.fillStyle=wg;ww.fillRect(0,0,256,256);
+  for(let x=0;x<256;x+=16){ // rib highlight + shadow flank = corrugation read
+    ww.fillStyle='rgba(255,255,255,.18)';ww.fillRect(x,0,4,256);
+    ww.fillStyle='rgba(0,0,0,.22)';ww.fillRect(x+9,0,4,256);}
+  ww.fillStyle='rgba(0,0,0,.28)';ww.fillRect(0,236,256,20);           // skirt
+  ww.fillStyle='rgba(0,0,0,.14)';ww.fillRect(0,84,256,3);ww.fillRect(0,168,256,3); // girts
+  const wallTex=ctex(wwC);wallTex.wrapS=wallTex.wrapT=THREE.RepeatWrapping;wallTex.repeat.set(5,1);
+  const wallM=new THREE.MeshStandardMaterial({map:wallTex,roughness:.75,metalness:.15});
   const wBack=new THREE.Mesh(new THREE.PlaneGeometry(11.5,6.4),wallM);
   wBack.position.set(AX,1.6,AZ-4.4);wing.add(wBack);
-  const wEnd=new THREE.Mesh(new THREE.PlaneGeometry(9,6.4),wallM);
+  const wEnd=new THREE.Mesh(new THREE.PlaneGeometry(9,6.4),wallM.clone());
+  wEnd.material.map=wallTex.clone();wEnd.material.map.repeat.set(4,1);
   wEnd.rotation.y=Math.PI/2;wEnd.position.set(AX-5.7,1.6,AZ);wing.add(wEnd);
-  // truss ceiling + glowing skylight panels (the video's hangar roof)
-  const beamM=new THREE.MeshStandardMaterial({color:0x14161c,roughness:.6,metalness:.5});
-  for(let i=0;i<6;i++){
-    const beam=new THREE.Mesh(new THREE.BoxGeometry(.14,.26,8.8),beamM);
-    beam.position.set(AX-5+i*2,4.05,AZ);wing.add(beam);
+  /* ---- hangar roof: real double-pitch trusses + purlins, open to a bright sky ---- */
+  const steelM=new THREE.MeshStandardMaterial({color:0x2a2e36,roughness:.55,metalness:.6});
+  const RY=3.9, APEX=.85;                       // eave height, ridge rise
+  for(let i=0;i<7;i++){                          // truss frames every 1.9 across x
+    const tx=AX-5.7+i*1.9, half=4.5;
+    [-1,1].forEach(s=>{                          // top chords (pitched)
+      const len=Math.hypot(half,APEX);
+      const tc=new THREE.Mesh(new THREE.BoxGeometry(.09,.16,len),steelM);
+      tc.position.set(tx,RY+APEX/2,AZ+s*half/2);
+      tc.rotation.x=s*Math.atan2(APEX,half);wing.add(tc);});
+    const bc=new THREE.Mesh(new THREE.BoxGeometry(.09,.12,9),steelM);   // bottom chord
+    bc.position.set(tx,RY,AZ);wing.add(bc);
+    for(let k=-3;k<=3;k++){                      // web verticals
+      const h=APEX*(1-Math.abs(k)/4.5);
+      if(h<.08)continue;
+      const web=new THREE.Mesh(new THREE.BoxGeometry(.06,h,.06),steelM);
+      web.position.set(tx,RY+h/2,AZ+k*1.28);wing.add(web);}
   }
-  const spine=new THREE.Mesh(new THREE.BoxGeometry(11.4,.2,.2),beamM);
-  spine.position.set(AX,4.15,AZ);wing.add(spine);
-  const skyM=new THREE.MeshBasicMaterial({color:0x9cc8ee,toneMapped:false});
-  skyM.color.multiplyScalar(.5);                 // under the bloom knee, still reads as daylight
-  for(let i=0;i<5;i++)for(let j=0;j<3;j++){
-    const p=new THREE.Mesh(new THREE.PlaneGeometry(1.5,2.2),skyM);
-    p.rotation.x=Math.PI/2;p.position.set(AX-4+i*2,4.12,AZ-2.7+j*2.7);wing.add(p);
+  for(let j=0;j<6;j++){                          // purlins running the hall length
+    const off=(j-2.5)*1.7, rise=APEX*(1-Math.abs(j-2.5)/3.2);
+    const p=new THREE.Mesh(new THREE.BoxGeometry(11.6,.08,.1),steelM);
+    p.position.set(AX,RY+Math.max(.05,rise)+.12,AZ+off);wing.add(p);
   }
-  const ceil=new THREE.Mesh(new THREE.PlaneGeometry(11.5,9),
-    new THREE.MeshStandardMaterial({color:0x0c0e13,roughness:.95,side:THREE.DoubleSide}));
-  ceil.rotation.x=Math.PI/2;ceil.position.set(AX,4.2,AZ);wing.add(ceil);
-  // cool daylight spill so the hall reads differently from the neon studio
-  [[-3.8,0,30],[-1.2,.6,26],[1.6,0,26],[4.2,.4,24]].forEach(([dx,dz,pw])=>{
-    const L=new THREE.PointLight(0xcfe0f4,pw,11);L.position.set(AX+dx,3.5,AZ+dz);wing.add(L);
+  // sky canvas: zenith->horizon gradient + sun glow, seen through the roof glazing
+  const [skC,sk]=makeCanvas(512,256);
+  const sg=sk.createLinearGradient(0,0,0,256);
+  sg.addColorStop(0,'#2f6fd0');sg.addColorStop(.55,'#6fa8e8');sg.addColorStop(1,'#cfe4f8');
+  sk.fillStyle=sg;sk.fillRect(0,0,512,256);
+  const sun=sk.createRadialGradient(150,74,4,150,74,90);
+  sun.addColorStop(0,'rgba(255,252,235,1)');sun.addColorStop(.25,'rgba(255,244,200,.85)');sun.addColorStop(1,'rgba(255,244,200,0)');
+  sk.fillStyle=sun;sk.fillRect(0,0,512,256);
+  sk.fillStyle='rgba(255,255,255,.35)';         // thin high clouds
+  [[60,150,150,10],[280,60,190,8],[360,180,130,7]].forEach(([x,y,w2,h2])=>{sk.beginPath();sk.ellipse(x,y,w2,h2,0,0,Math.PI*2);sk.fill();});
+  const skyM=new THREE.MeshBasicMaterial({map:ctex(skC),toneMapped:false});
+  skyM.color.setScalar(.85);                     // bright daylight; sun core rides the bloom knee for glare
+  const skyPlane=new THREE.Mesh(new THREE.PlaneGeometry(12.4,9.6),skyM);
+  skyPlane.rotation.x=Math.PI/2;skyPlane.position.set(AX,RY+APEX+.55,AZ);wing.add(skyPlane);
+  // glazing bars so the sky reads as panels, not a hole
+  const barM=new THREE.MeshStandardMaterial({color:0x1a1d24,roughness:.5,metalness:.6});
+  for(let i=0;i<8;i++){const b=new THREE.Mesh(new THREE.BoxGeometry(.07,.06,9.4),barM);
+    b.position.set(AX-5.6+i*1.6,RY+APEX+.5,AZ);wing.add(b);}
+  for(let j=0;j<5;j++){const b=new THREE.Mesh(new THREE.BoxGeometry(11.8,.06,.07),barM);
+    b.position.set(AX,RY+APEX+.5,AZ-3.6+j*1.8);wing.add(b);}
+  // daylight rig: cool ambient spill + warm sun shafts angled like the reference
+  [[-3.8,0,19],[-1.2,.6,17],[1.6,0,17],[4.2,.4,15]].forEach(([dx,dz,pw])=>{
+    const L=new THREE.PointLight(0xd8e6f6,pw,12);L.position.set(AX+dx,3.6,AZ+dz);wing.add(L);
   });
-  const rowWash=new THREE.PointLight(0xdfe8f4,20,8);  // dedicated wash on the cabinet row
+  const sunL=new THREE.DirectionalLight(0xfff2d8,1.5);                // low warm sun through the glazing
+  sunL.position.set(AX-3,7,AZ+5);sunL.target.position.set(AX+1,-1.6,AZ-2);wing.add(sunL,sunL.target);
+  const rowWash=new THREE.PointLight(0xe8eef8,13,8);                  // dedicated wash on the cabinet row
   rowWash.position.set(AX-1.5,2.2,AZ-1.6);wing.add(rowWash);
   // "OTTI ARCADE" wall sign (canvas, brand green)
   const [asC,as]=makeCanvas(512,128);
