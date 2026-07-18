@@ -1077,10 +1077,12 @@ const arcUnits=[]; let curArc=null;
   const CAB_H=1.75;                                // world-space cabinet height (matches old procedural row)
   const cabGLB={};                                 // per-file promise cache: the LOST LAND twins share one fetch
   function loadCabGLB(grp,file,targetH){
-    (cabGLB[file]??=new Promise(res=>gltfL.load(`assets/props/${file}.glb`,res,undefined,()=>{})))
+    (cabGLB[file]??=new Promise(res=>gltfL.load(`assets/props/${file}.glb`,res,undefined,
+      ()=>console.warn('cab GLB failed: '+file)))) // silent-skip stays, but a bad deploy is diagnosable
     .then(g=>{
+      // clone shares geometries AND materials — per-cabinet material tweaks would hit both twins
       const o=g.scene.clone(true), bb=new THREE.Box3().setFromObject(o), dim=bb.getSize(new THREE.Vector3());
-      o.scale.setScalar(targetH/dim.y);            // cabinets are sized by height, not max dimension
+      o.scale.setScalar(targetH/(dim.y||1));       // cabinets are sized by height, not max dimension
       o.rotation.y=-1.0;                           // Tripo aligns the mesh to the 3/4 source photo; -1.0 faces the screen at +z (verified dead-on for all 8)
       o.traverse(c=>{if(c.isMesh&&c.material){
         c.material.emissiveIntensity=0;            // house rule: Tripo GLBs ship hot emissives, bloom blows out
