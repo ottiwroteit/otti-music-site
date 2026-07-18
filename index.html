@@ -1063,21 +1063,23 @@ const arcUnits=[]; let curArc=null;
   asMesh.position.set(AX,2.95,AZ-4.38);wing.add(asMesh);
 
   /* ---- procedural cabinet builder ---- */
-  const CAB_DEFS=[ // [game, title, bodyCol, trimCol, tintCss, gunCols]
-    ['vcop2',     'ARCADE COP 2',   0xd8d0c0, 0xe8c020, '#ffd23d', [0x2b6be0,0xe84040]],
-    ['vcop3',     'ARCADE COP 3',   0x101318, 0x2b6be0, '#66b7ff', [0x2b6be0,0xff9a3d]],
-    ['lostworld', 'THE LOST LAND',  0x0d1410, 0x39c463, '#39c463', [0xff9a3d,0x39c463]],
-    ['lostworld', 'THE LOST LAND',  0x1a0f10, 0xc03028, '#ff6a50', [0x2b6be0,0x39c463]], // red deluxe twin (same game, like real arcades)
-    ['machinegun','SKYFIRE GUNNER', 0x8f1a1a, 0x1a1114, '#ff5050', [0xd0d4dc,0xd0d4dc]],
-    ['hotd',      'HOUSE OF THE UNDEAD',0x14101c,0x8dff1a,'#8dff1a',[0xe84040,0x2b6be0]],
-    ['buckhunter','BIG RACK HUNTER',0x2a1a0c, 0xff9a3d, '#ff9a3d', [0xff7a1a,0xff7a1a]],
-    ['redgun',    'RED GUN RANGE',  0xc8b020, 0xc03028, '#ffd23d', [0xe84040,0xe84040]],
+  const CAB_DEFS=[ // [game, title] — visuals now come from the Tripo GLBs
+    ['vcop2',     'ARCADE COP 2'],
+    ['vcop3',     'ARCADE COP 3'],
+    ['lostworld', 'THE LOST LAND'],
+    ['lostworld', 'THE LOST LAND'],   // twin unit (same game, like real arcades)
+    ['machinegun','SKYFIRE GUNNER'],
+    ['hotd',      'HOUSE OF THE UNDEAD'],
+    ['buckhunter','BIG RACK HUNTER'],
+    ['redgun',    'RED GUN RANGE'],
   ];
   // photoreal Tripo cabinets (assets/props/arc-<game>.glb, meshopt+webp ~1.5MB each)
   const CAB_H=1.75;                                // world-space cabinet height (matches old procedural row)
+  const cabGLB={};                                 // per-file promise cache: the LOST LAND twins share one fetch
   function loadCabGLB(grp,file,targetH){
-    gltfL.load(`assets/props/${file}.glb`,g=>{
-      const o=g.scene, bb=new THREE.Box3().setFromObject(o), dim=bb.getSize(new THREE.Vector3());
+    (cabGLB[file]??=new Promise(res=>gltfL.load(`assets/props/${file}.glb`,res,undefined,()=>{})))
+    .then(g=>{
+      const o=g.scene.clone(true), bb=new THREE.Box3().setFromObject(o), dim=bb.getSize(new THREE.Vector3());
       o.scale.setScalar(targetH/dim.y);            // cabinets are sized by height, not max dimension
       o.rotation.y=-1.0;                           // Tripo aligns the mesh to the 3/4 source photo; -1.0 faces the screen at +z (verified dead-on for all 8)
       o.traverse(c=>{if(c.isMesh&&c.material){
@@ -1088,7 +1090,7 @@ const arcUnits=[]; let curArc=null;
       bb.setFromObject(o);
       o.position.set(-(bb.min.x+bb.max.x)/2,-bb.min.y,-(bb.min.z+bb.max.z)/2); // center, then ground
       grp.add(o);
-    },undefined,()=>{});                           // missing GLB = empty slot; click zone still works
+    });                                            // load error = promise never settles = empty slot; click zone still works
   }
   function buildCab(def,x,z,ry){
     const [game,title]=def;
