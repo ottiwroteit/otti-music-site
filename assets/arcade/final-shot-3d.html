@@ -23,7 +23,8 @@
 import * as THREE from 'three';
 import {createEngine,rnd,SFX} from './engine3d.js';
 
-const W=960,H=540;
+// the frame size lives on the engine (E.W / E.H). Do not redeclare it here: six games
+// copying a 960x540 constant is six places for it to drift out of sync with the engine.
 
 // ---- rail: authored spline the camera rides; u in 0..1 loops per stage ----
 const RAILS=[
@@ -117,19 +118,19 @@ const E=createEngine({
   stages:[buildCity,buildSpace],
   kinds:KINDS,
 
-  onStart(E){FS.power=null;FS.powerAmmo=0;},
+  onStart(E){G.power=null;G.powerAmmo=0;},
   // new stage, new lap: restart every spawn cadence with the rail
-  onNextStage(E){FS.waveT=0;FS.missileT=0;FS.powerT=0;},
+  onNextStage(E){G.waveT=0;G.missileT=0;G.powerT=0;},
 
   onKill(e,E){
     if(!e.k.power)return false;        // not a pickup: let the engine score and blow it up
-    if(e.k.power==='shield')FS.shield=Math.min(8,FS.shield+2); else {FS.powerAmmo=5;FS.power='bazooka';}
+    if(e.k.power==='shield')FS.shield=Math.min(8,FS.shield+2); else {G.powerAmmo=5;G.power='bazooka';}
     SFX.power();
     return true;
   },
   damage(hit,E){
-    const dmg=(FS.power==='bazooka'&&FS.powerAmmo>0)?3:1;
-    if(FS.power==='bazooka'&&FS.powerAmmo>0){FS.powerAmmo--;if(FS.powerAmmo<=0)FS.power=null;}
+    const dmg=(G.power==='bazooka'&&G.powerAmmo>0)?3:1;
+    if(G.power==='bazooka'&&G.powerAmmo>0){G.powerAmmo--;if(G.powerAmmo<=0)G.power=null;}
     return dmg;
   },
 
@@ -147,23 +148,23 @@ const E=createEngine({
     const ahead=()=>E.railPos(u+0.14,new THREE.Vector3());
     // every cadence below is in SECONDS, on the same clock as the rail. Frame-counted
     // cadence desynced from the time-driven camera and made run length scale with refresh rate.
-    FS.waveT+=dt;FS.missileT+=dt;FS.powerT+=dt;
+    G.waveT+=dt;G.missileT+=dt;G.powerT+=dt;
     const waveEvery=Math.max(0.5,(70-FS.stage*10)/60);
-    if(canSpawn&&FS.waveT>=waveEvery){
-      FS.waveT=0;
+    if(canSpawn&&G.waveT>=waveEvery){
+      G.waveT=0;
       const p=ahead(), side=Math.random()<.5?-1:1;
       if(Math.random()<.6)E.spawn('mech',{at:p.clone().add(new THREE.Vector3(side*rnd(6,18),rnd(-4,6),0))});
       else E.spawn('pod',{at:p.clone().add(new THREE.Vector3(side*30,rnd(2,14),0)),
         vel:new THREE.Vector3(-side*14,0,6),spin:0.6});
     }
-    if(canSpawn&&FS.missileT>=2.5){
-      FS.missileT=0;
+    if(canSpawn&&G.missileT>=2.5){
+      G.missileT=0;
       const p=ahead();
       const v=E.camera.position.clone().sub(p).normalize().multiplyScalar(26);
       E.spawn('missile',{at:p,vel:v});
     }
-    if(canSpawn&&FS.powerT>=10){
-      FS.powerT=0;
+    if(canSpawn&&G.powerT>=10){
+      G.powerT=0;
       const p=ahead();
       E.spawn(Math.random()<.5?'powerB':'powerS',{at:p.clone().add(new THREE.Vector3(0,8,0)),
         vel:new THREE.Vector3(0,0,10),spin:1.4});
@@ -178,9 +179,9 @@ const E=createEngine({
     // shield pips
     for(let i=0;i<8;i++){
       ui.fillStyle=i<FS.shield?'#39c463':'rgba(255,255,255,.12)';
-      ui.beginPath();ui.roundRect(W-30-i*16,H-24,12,12,3);ui.fill();
+      ui.beginPath();ui.roundRect(E.W-30-i*16,E.H-24,12,12,3);ui.fill();
     }
-    if(FS.power==='bazooka')E.txt('BAZOOKA x'+FS.powerAmmo,14,H-16,15,'#ff7a1a','left');
+    if(G.power==='bazooka')E.txt('BAZOOKA x'+G.powerAmmo,14,E.H-16,15,'#ff7a1a','left');
     // stage banner
     E.drawBanner();
     // crosshair
@@ -191,9 +192,10 @@ const E=createEngine({
   },
 });
 
-// FINAL SHOT's own state rides on the engine state object, same shape as the pre-extraction FS
-const FS=E.state;
-FS.waveT=0;FS.missileT=0;FS.powerT=0;FS.power=null;FS.powerAmmo=0;
+// FS is the engine's own state (mode, t, stage, score, shield). G is the namespaced bag the
+// engine reserves for the game, so a future engine field can never collide with a game field.
+const FS=E.state, G=FS.game;
+G.waveT=0;G.missileT=0;G.powerT=0;G.power=null;G.powerAmmo=0;
 
 E.start();   // builds stage 0, installs the six window.__arc* hooks, starts the rAF loop
 
@@ -205,6 +207,9 @@ if(location.hash==='#selftest')(async()=>{
   A(typeof window.__arcStop==='function','__arcStop exists');
   A(window.__arcGame==='gundam','__arcGame is gundam');
   A(FS.mode==='attract','starts in attract');
+  A(typeof E.toGame==='function','toGame is exported for extra pointer handlers');
+  A(FS.game&&typeof FS.game==='object','state.game namespace exists');
+  A(E.W===960&&E.H===540,'engine owns the frame size');
   const p=E.railPos(0,new THREE.Vector3()), p2=E.railPos(0.5,new THREE.Vector3());
   A(p.distanceTo(p2)>1,'rail actually travels');
   FS.start();
@@ -226,7 +231,7 @@ if(location.hash==='#selftest')(async()=>{
   const e=E.spawn('mech',{at:new THREE.Vector3(0,12,-40)});
   A(e&&FS.ents.length===1,'spawn adds an entity');
   window.__arcStep(2,0.016);
-  A(e.sx>=0&&e.sx<=960,'entity projects into screen space');
+  A(e.sx>=0&&e.sx<=E.W,'entity projects into screen space');
   A(E.hitTest(e.sx,e.sy)===e,'hitTest finds it at its own screen position');
   A(E.hitTest(5,5)===null,'hitTest misses far away');
   E.killEnt(e);E.killEnt(e);          // double-kill must not double-score
