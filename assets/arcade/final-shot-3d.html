@@ -170,7 +170,9 @@ const fxPos=new Float32Array(FXN*3);
 for(let i=0;i<FXN;i++)fxPos[i*3+1]=FX_PARK;
 const fxGeo=new THREE.BufferGeometry().setAttribute('position',new THREE.BufferAttribute(fxPos,3));
 const fxPts=new THREE.Points(fxGeo,new THREE.PointsMaterial({
-  color:0xffb020,size:2.6,sizeAttenuation:true,transparent:true,opacity:.95,toneMapped:false}));
+  // size is in world units with attenuation on: 2.6 read as screen-filling blobs on a kill
+  // near the camera, so keep the sprite small and let the burst count carry the punch
+  color:0xffb020,size:0.5,sizeAttenuation:true,transparent:true,opacity:.95,toneMapped:false}));
 fxPts.frustumCulled=false;          // positions move every frame; a stale bounding sphere would pop the cloud out
 scene.add(fxPts);
 
