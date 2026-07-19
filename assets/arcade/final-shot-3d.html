@@ -21,24 +21,9 @@
 </script>
 <script type="module">
 import * as THREE from 'three';
-import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
-import {MeshoptDecoder} from 'three/addons/libs/meshopt_decoder.module.js';
+import {createEngine,rnd,SFX} from './engine3d.js';
 
 const W=960,H=540;
-const glc=document.getElementById('gl'), uic=document.getElementById('ui'), ui=uic.getContext('2d');
-function fit(){const s=Math.min(innerWidth/W,innerHeight/H);
-  document.getElementById('wrap').style.transform=`translate(-50%,-50%) scale(${s})`;}
-addEventListener('resize',fit);fit();
-
-const renderer=new THREE.WebGLRenderer({canvas:glc,antialias:true});
-renderer.setPixelRatio(1);                    // hard budget: this runs in an iframe over a 3D site
-renderer.setSize(W,H,false);
-renderer.toneMapping=THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure=1.1;
-const scene=new THREE.Scene();
-const camera=new THREE.PerspectiveCamera(62,W/H,0.1,900);
-const gltfL=new GLTFLoader();
-gltfL.setMeshoptDecoder(MeshoptDecoder);      // meshopt files silently fail to load without this
 
 // ---- rail: authored spline the camera rides; u in 0..1 loops per stage ----
 const RAILS=[
@@ -53,39 +38,12 @@ const RAILS=[
     new THREE.Vector3(0,0,-300),
   ],false,'catmullrom',0.5),
 ];
-function rail(){return RAILS[FS.stage%RAILS.length];}
-function railPos(u,out){return rail().getPointAt(Math.min(0.999,Math.max(0,u)),out);}
-function railLook(u,out){return rail().getPointAt(Math.min(0.999,Math.max(0,u+0.06)),out);}
-
-const _rp=new THREE.Vector3(), _rl=new THREE.Vector3();
-function driveCamera(){
-  const u=(FS.t*0.035)%1;                     // ~28s per stage lap
-  camera.position.copy(railPos(u,_rp));
-  camera.lookAt(railLook(u,_rl));
-  camera.rotation.z=Math.sin(FS.t*0.5)*0.06;  // gentle bank so the ride reads as flight
-}
 
 // ---- procedural stage worlds: burning neon city (stage 0), space (stage 1) ----
-let stageGroup=null;
-function disposeGroup(gp){
-  gp.traverse(o=>{if(o.isMesh||o.isPoints){o.geometry.dispose();   // Points too: the starfield leaks otherwise
-    (Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m&&m.dispose());}});
-}
-// deterministic pseudo-random so a rebuilt stage is identical (selftest relies on this)
-function srnd(seed){let s=seed>>>0;return()=>((s=(s*1664525+1013904223)>>>0)/4294967296);}
-
-function buildStage(n){
-  if(stageGroup){scene.remove(stageGroup);disposeGroup(stageGroup);}
-  stageGroup=new THREE.Group();scene.add(stageGroup);
-  const R=srnd(1337+n*4099);      // seeded per stage index so every rebuild of stage n is identical
-  if(n%2===0)buildCity(stageGroup,R); else buildSpace(stageGroup,R);
-  return stageGroup;
-}
-
-function buildCity(gp,R){
+function buildCity(gp,R,E){
   // OTTI house rule: vibrant, never flat. This is a neon skyline at dusk, not a brown box.
-  scene.background=new THREE.Color(0x1a0a2e);
-  scene.fog=new THREE.Fog(0x2a0f3a,70,460);
+  E.scene.background=new THREE.Color(0x1a0a2e);
+  E.scene.fog=new THREE.Fog(0x2a0f3a,70,460);
   gp.add(new THREE.AmbientLight(0xffd0b0,0.9));
   const key=new THREE.DirectionalLight(0xffc070,2.4);key.position.set(-30,60,20);gp.add(key);
   // magenta and cyan rims off the studio palette, so the corridor reads as neon rather than mud
@@ -115,9 +73,9 @@ function buildCity(gp,R){
   return gp;
 }
 
-function buildSpace(gp,R){
-  scene.background=new THREE.Color(0x02030d);
-  scene.fog=new THREE.Fog(0x02030d,120,700);
+function buildSpace(gp,R,E){
+  E.scene.background=new THREE.Color(0x02030d);
+  E.scene.fog=new THREE.Fog(0x02030d,120,700);
   gp.add(new THREE.AmbientLight(0x88aaff,0.35));
   const sun=new THREE.DirectionalLight(0xffffff,2.0);sun.position.set(40,30,10);gp.add(sun);
   // starfield
@@ -142,74 +100,6 @@ function buildSpace(gp,R){
   return gp;
 }
 
-/* ---------- tiny synth SFX (no samples anywhere), ported verbatim from assets/arcade/index.html ---------- */
-let AC=null,master=null;
-function ac(){if(!AC){AC=new (window.AudioContext||window.webkitAudioContext)();master=AC.createGain();master.gain.value=.5;master.connect(AC.destination);}AC.resume();return AC;}
-function blip(f0,f1,dur,type,vol,noise){
-  if(!AC)return;const t=AC.currentTime;
-  if(noise){const n=AC.createBufferSource(),len=AC.sampleRate*dur,b=AC.createBuffer(1,len,AC.sampleRate),d=b.getChannelData(0);
-    for(let i=0;i<len;i++)d[i]=(Math.random()*2-1)*(1-i/len);n.buffer=b;
-    const gn=AC.createGain();gn.gain.setValueAtTime(vol,t);gn.gain.exponentialRampToValueAtTime(.001,t+dur);
-    const fl=AC.createBiquadFilter();fl.type='bandpass';fl.frequency.setValueAtTime(f0,t);fl.frequency.exponentialRampToValueAtTime(Math.max(f1,40),t+dur);
-    n.connect(fl);fl.connect(gn);gn.connect(master);n.start(t);n.stop(t+dur);return;}
-  const o=AC.createOscillator(),gn=AC.createGain();o.type=type||'square';
-  o.frequency.setValueAtTime(f0,t);o.frequency.exponentialRampToValueAtTime(Math.max(f1,30),t+dur);
-  gn.gain.setValueAtTime(vol,t);gn.gain.exponentialRampToValueAtTime(.001,t+dur);
-  o.connect(gn);gn.connect(master);o.start(t);o.stop(t+dur);
-}
-const SFX={
-  shot:()=>blip(900,120,.09,'square',.30,true),
-  hit:()=>blip(300,900,.08,'square',.22),
-  big:()=>blip(140,30,.5,'sawtooth',.4,true),
-  bad:()=>blip(200,60,.35,'sawtooth',.35),
-  power:()=>{blip(440,880,.12,'square',.25);setTimeout(()=>blip(660,1320,.12,'square',.25),90);},
-  over:()=>{blip(400,50,.8,'sawtooth',.35);},
-  stage:()=>{[523,659,784,1046].forEach((f,i)=>setTimeout(()=>blip(f,f,.14,'square',.22),i*110));},
-};
-
-/* ---------- enemies: pooled Tripo GLB clones, screen-space hit detection ---------- */
-const rnd=(a,b)=>a+Math.random()*(b-a);
-
-/* ---------- pooled particle fx: one Points cloud, recycled by index, zero allocation in play ---------- */
-const FXN=260;
-const FX_PARK=-99999;               // dead particles are parked off world, never drawn where they died
-const FXP={count:0,i:0,life:new Float32Array(FXN),vel:new Float32Array(FXN*3)};
-const fxPos=new Float32Array(FXN*3);
-for(let i=0;i<FXN;i++)fxPos[i*3+1]=FX_PARK;
-const fxGeo=new THREE.BufferGeometry().setAttribute('position',new THREE.BufferAttribute(fxPos,3));
-const fxPts=new THREE.Points(fxGeo,new THREE.PointsMaterial({
-  // size is in world units with attenuation on: 2.6 read as screen-filling blobs on a kill
-  // near the camera, so keep the sprite small and let the burst count carry the punch
-  color:0xffb020,size:0.5,sizeAttenuation:true,transparent:true,opacity:.95,toneMapped:false}));
-fxPts.frustumCulled=false;          // positions move every frame; a stale bounding sphere would pop the cloud out
-scene.add(fxPts);
-
-function emit(pos,n,spread,speed){
-  for(let j=0;j<n;j++){
-    const i=FXP.i;FXP.i=(FXP.i+1)%FXN;
-    fxPos[i*3]=pos.x;fxPos[i*3+1]=pos.y;fxPos[i*3+2]=pos.z;
-    FXP.vel[i*3]=(Math.random()-.5)*spread*speed;
-    FXP.vel[i*3+1]=(Math.random()-.5)*spread*speed;
-    FXP.vel[i*3+2]=(Math.random()-.5)*spread*speed;
-    FXP.life[i]=0.8;FXP.count++;
-  }
-  fxGeo.attributes.position.needsUpdate=true;
-}
-function boom(pos){emit(pos,40,1,26);FS.shake=Math.max(FS.shake,.35);}
-function spark(pos){emit(pos,10,1,12);}
-function updateFX(dt){
-  let live=0;
-  for(let i=0;i<FXN;i++){
-    if(FXP.life[i]<=0)continue;
-    FXP.life[i]-=dt;live++;
-    if(FXP.life[i]<=0){fxPos[i*3+1]=FX_PARK;continue;}   // retire off world instead of freezing mid air
-    fxPos[i*3]+=FXP.vel[i*3]*dt;
-    fxPos[i*3+1]+=FXP.vel[i*3+1]*dt-9*dt*dt;
-    fxPos[i*3+2]+=FXP.vel[i*3+2]*dt;
-  }
-  if(live)fxGeo.attributes.position.needsUpdate=true;
-}
-
 const KINDS={
   mech   :{hp:2,pts:300,file:'fs-mech',   r:3.2,size:6.0},
   pod    :{hp:1,pts:200,file:'fs-pod',    r:2.2,size:3.4},
@@ -217,266 +107,95 @@ const KINDS={
   powerB :{hp:1,pts:0,  file:'fs-pod',    r:2.0,size:3.0,power:'bazooka'},
   powerS :{hp:1,pts:0,  file:'fs-pod',    r:2.0,size:3.0,power:'shield'},
 };
-const POOL={};                      // file -> array of ready clones
-const BASE={};                      // file -> largest dimension at scale 1
-const MAX_LIVE=12;                  // hard budget: never allocate a clone during play
 
-['fs-mech','fs-pod','fs-missile'].forEach(file=>{
-  POOL[file]=[];
-  gltfL.load(`../props/${file}.glb`,g=>{
-    const src=g.scene;
-    src.traverse(c=>{if(c.isMesh&&c.material){
-      (Array.isArray(c.material)?c.material:[c.material]).forEach(m=>{
-        m.emissiveIntensity=0;      // house rule: generated GLBs ship hot emissives
-        m.envMapIntensity=.6;
-      });
-    }});
-    // measure once at scale 1; re-measuring a scaled clone would reset it to scale 1
-    const dim=new THREE.Box3().setFromObject(src).getSize(new THREE.Vector3());
-    BASE[file]=Math.max(1e-4,dim.x,dim.y,dim.z);
-    for(let i=0;i<6;i++){const c=src.clone(true);c.visible=false;scene.add(c);POOL[file].push(c);}
-  },undefined,()=>console.warn('enemy GLB failed: '+file));  // silent skip, game still playable
-});
+const E=createEngine({
+  gameId:'gundam',
+  title:'FINAL SHOT',
+  subtitle:'MOBILE SUIT ARCADE',
+  tint:'#ffd23d',
+  rails:RAILS,
+  stages:[buildCity,buildSpace],
+  kinds:KINDS,
 
-function takeFromPool(file,size){
-  const p=POOL[file];
-  if(!p||!p.length)return null;      // not loaded yet, or pool exhausted -> skip this spawn
-  const o=p.pop();
-  o.scale.setScalar(size/BASE[file]);
-  o.rotation.set(0,0,0);
-  o.visible=true;return o;
-}
-function returnToPool(file,o){o.visible=false;POOL[file]&&POOL[file].push(o);}
+  onStart(E){FS.power=null;FS.powerAmmo=0;},
+  // new stage, new lap: restart every spawn cadence with the rail
+  onNextStage(E){FS.waveT=0;FS.missileT=0;FS.powerT=0;},
 
-function spawn(kindKey,opts){
-  if(FS.ents.filter(e=>!e.dead).length>=MAX_LIVE)return null;
-  const k=KINDS[kindKey];
-  if(!k)return null;
-  const obj=takeFromPool(k.file,k.size);
-  if(!obj)return null;
-  const at=(opts&&opts.at)||new THREE.Vector3(0,10,-60);
-  obj.position.copy(at);
-  const e={kind:kindKey,k,obj,hp:k.hp,t:0,dead:0,sx:-1,sy:-1,behind:false,baseY:at.y,
-    vel:(opts&&opts.vel)||new THREE.Vector3(0,0,0),spin:(opts&&opts.spin)||0};
-  FS.ents.push(e);
-  projectEnt(e);   // project immediately: an unprojected sx/sy of -1 is clickable near the top-left corner
-  return e;
-}
-
-const _pv=new THREE.Vector3();
-function projectEnt(e){
-  _pv.copy(e.obj.position).project(camera);
-  e.sx=(_pv.x+1)/2*W; e.sy=(1-_pv.y)/2*H; e.behind=_pv.z>1;
-}
-function screenRadius(e){
-  // radius in screen px scales with distance; keep clicks fair at depth
-  const d=camera.position.distanceTo(e.obj.position);
-  return Math.max(18,(e.k.r*520)/Math.max(6,d));
-}
-function hitTest(x,y){
-  let best=null,bd=1e9;
-  for(const e of FS.ents){
-    if(e.dead||e.behind)continue;
-    const dx=e.sx-x, dy=e.sy-y, d=Math.hypot(dx,dy);
-    if(d<screenRadius(e)&&d<bd){bd=d;best=e;}
-  }
-  return best;
-}
-function killEnt(e){
-  if(e.dead)return;                  // double-kill guard: score exactly once
-  e.dead=1;
-  if(e.k.power){
+  onKill(e,E){
+    if(!e.k.power)return false;        // not a pickup: let the engine score and blow it up
     if(e.k.power==='shield')FS.shield=Math.min(8,FS.shield+2); else {FS.powerAmmo=5;FS.power='bazooka';}
     SFX.power();
-  } else { FS.score+=e.k.pts; SFX.big(); boom(e.obj.position); }
-  returnToPool(e.k.file,e.obj);
-}
-
-const STAGE_SECONDS=1/0.035;   // exactly one lap of the rail (driveCamera uses t*0.035)
-const FS={
-  mode:'attract', t:0, tick:0, stage:0, score:0, hi:0, shield:6,
-  waveT:0, missileT:0, powerT:0, paused:false,
-  power:null, powerAmmo:0, ents:[], flashMsg:'', flashT:0, shake:0, over:0,
-  start(){this.mode='play';this.t=0;this.tick=0;this.stage=0;this.score=0;this.shield=6;
-    this.power=null;this.powerAmmo=0;
-    // hand every checked-out clone back before clearing, or a replay starves the pool
-    for(const e of this.ents)if(!e.dead)returnToPool(e.k.file,e.obj);
-    this.ents.length=0;this.flashMsg='STAGE 1';this.flashT=2;
-    buildStage(0);   // replay must rebuild the world; stage state and visible world would desync otherwise
-    SFX.stage();},
-  hurt(n){if(this.mode!=='play')return;this.shake=.4;SFX.bad();
-    this.shield-=n;if(this.shield<=0)this.gameOver();},
-  gameOver(){this.mode='over';this.over=0;this.hi=Math.max(this.hi,this.score);SFX.over();},
-  nextStage(){this.stage++;
-    // recycle the old stage's enemies: the rail changes under them, so they would
-    // hang in the new world holding pool slots until the camera happened to pass each one
-    for(const e of this.ents)if(!e.dead)returnToPool(e.k.file,e.obj);
-    this.ents.length=0;
-    this.t=0;this.waveT=0;this.missileT=0;this.powerT=0;   // new stage, new lap: restart the rail at its start
-    if(this.stage>=2){this.gameOver();return;}             // check before building a world we would discard
-    buildStage(this.stage);
-    SFX.stage();this.flashMsg='STAGE '+(this.stage+1);this.flashT=2;},
-  shoot(x,y){
-    if(this.mode==='attract'){this.start();return;}
-    if(this.mode==='over'){if(this.over>1.2)this.mode='attract';return;}
-    SFX.shot();
-    const hit=hitTest(x,y);
-    if(!hit)return;
-    const dmg=(this.power==='bazooka'&&this.powerAmmo>0)?3:1;
-    if(this.power==='bazooka'&&this.powerAmmo>0){this.powerAmmo--;if(this.powerAmmo<=0)this.power=null;}
-    hit.hp-=dmg;
-    if(hit.hp<=0)killEnt(hit); else {SFX.hit();spark(hit.obj.position);}
+    return true;
   },
-  update(dt){
-    this.t+=dt;this.tick++;
-    if(this.flashT>0)this.flashT-=dt;
-    if(this.shake>0)this.shake=Math.max(0,this.shake-dt*2);
-    if(this.mode==='over')this.over+=dt;
-    driveCamera();
-    for(const e of this.ents){
-      if(e.dead)continue;
-      e.t+=dt;
-      e.obj.position.addScaledVector(e.vel,dt);
-      if(e.kind==='mech')e.obj.position.y=e.baseY+Math.sin(e.t*2)*0.35;  // hover bob about the spawn height, not a drift
-      e.obj.lookAt(camera.position);                                  // face first, then layer motion on top
-      if(e.kind==='pod')e.obj.rotation.z+=Math.sin(e.t*3)*0.25;       // banking
-      if(e.spin)e.obj.rotation.y+=Math.sin(e.t*e.spin)*0.4;
-      projectEnt(e);
-      // missiles that reach the camera hurt and vanish
-      if(e.k.harm&&camera.position.distanceTo(e.obj.position)<6){
-        this.hurt(1);e.dead=1;returnToPool(e.k.file,e.obj);continue;
-      }
-      // anything that passes behind the camera is recycled
-      if(e.obj.position.z>camera.position.z+12){e.dead=1;returnToPool(e.k.file,e.obj);}
-    }
-    updateFX(dt);
-    if(this.tick%30===0)this.ents=this.ents.filter(e=>!e.dead);
-    if(this.mode==='play'){
-      // spawns need lead time ahead of the camera; near the end of a lap there is none,
-      // and the camera teleports back to the start, so suppress spawning in that window
-      const u=(this.t*0.035)%1, canSpawn=u<0.84;
-      const ahead=()=>railPos(u+0.14,new THREE.Vector3());
-      // every cadence below is in SECONDS, on the same clock as the rail. Frame-counted
-      // cadence desynced from the time-driven camera and made run length scale with refresh rate.
-      this.waveT+=dt;this.missileT+=dt;this.powerT+=dt;
-      const waveEvery=Math.max(0.5,(70-this.stage*10)/60);
-      if(canSpawn&&this.waveT>=waveEvery){
-        this.waveT=0;
-        const p=ahead(), side=Math.random()<.5?-1:1;
-        if(Math.random()<.6)spawn('mech',{at:p.clone().add(new THREE.Vector3(side*rnd(6,18),rnd(-4,6),0))});
-        else spawn('pod',{at:p.clone().add(new THREE.Vector3(side*30,rnd(2,14),0)),
-          vel:new THREE.Vector3(-side*14,0,6),spin:0.6});
-      }
-      if(canSpawn&&this.missileT>=2.5){
-        this.missileT=0;
-        const p=ahead();
-        const v=camera.position.clone().sub(p).normalize().multiplyScalar(26);
-        spawn('missile',{at:p,vel:v});
-      }
-      if(canSpawn&&this.powerT>=10){
-        this.powerT=0;
-        const p=ahead();
-        spawn(Math.random()<.5?'powerB':'powerS',{at:p.clone().add(new THREE.Vector3(0,8,0)),
-          vel:new THREE.Vector3(0,0,10),spin:1.4});
-      }
-      // one stage is one full lap of its rail, so the stage never outlives the spline
-      // and the camera never cuts back to the start mid-stage
-      if(this.t>=STAGE_SECONDS)this.nextStage();
-    }
-    window.__arcState={game:'gundam',mode:this.mode,score:this.score,stage:this.stage,
-      ents:this.ents.filter(e=>!e.dead).length,shield:this.shield,audio:AC?AC.state:'none'};
+  damage(hit,E){
+    const dmg=(FS.power==='bazooka'&&FS.powerAmmo>0)?3:1;
+    if(FS.power==='bazooka'&&FS.powerAmmo>0){FS.powerAmmo--;if(FS.powerAmmo<=0)FS.power=null;}
+    return dmg;
   },
-  render(){
-    if(this.shake>0){
-      camera.position.x+=(Math.random()-.5)*this.shake*1.4;
-      camera.position.y+=(Math.random()-.5)*this.shake*1.4;
-    }
-    renderer.render(scene,camera);drawHUD();
+
+  entityUpdate(e,dt,E){
+    if(e.kind==='mech')e.obj.position.y=e.baseY+Math.sin(e.t*2)*0.35;  // hover bob about the spawn height, not a drift
+    e.obj.lookAt(E.camera.position);                                // face first, then layer motion on top
+    if(e.kind==='pod')e.obj.rotation.z+=Math.sin(e.t*3)*0.25;       // banking
+    if(e.spin)e.obj.rotation.y+=Math.sin(e.t*e.spin)*0.4;
   },
-};
 
-buildStage(0);
+  spawnTick(E,dt){
+    // spawns need lead time ahead of the camera; near the end of a lap there is none,
+    // and the camera teleports back to the start, so suppress spawning in that window
+    const u=E.railU(), canSpawn=u<0.84;
+    const ahead=()=>E.railPos(u+0.14,new THREE.Vector3());
+    // every cadence below is in SECONDS, on the same clock as the rail. Frame-counted
+    // cadence desynced from the time-driven camera and made run length scale with refresh rate.
+    FS.waveT+=dt;FS.missileT+=dt;FS.powerT+=dt;
+    const waveEvery=Math.max(0.5,(70-FS.stage*10)/60);
+    if(canSpawn&&FS.waveT>=waveEvery){
+      FS.waveT=0;
+      const p=ahead(), side=Math.random()<.5?-1:1;
+      if(Math.random()<.6)E.spawn('mech',{at:p.clone().add(new THREE.Vector3(side*rnd(6,18),rnd(-4,6),0))});
+      else E.spawn('pod',{at:p.clone().add(new THREE.Vector3(side*30,rnd(2,14),0)),
+        vel:new THREE.Vector3(-side*14,0,6),spin:0.6});
+    }
+    if(canSpawn&&FS.missileT>=2.5){
+      FS.missileT=0;
+      const p=ahead();
+      const v=E.camera.position.clone().sub(p).normalize().multiplyScalar(26);
+      E.spawn('missile',{at:p,vel:v});
+    }
+    if(canSpawn&&FS.powerT>=10){
+      FS.powerT=0;
+      const p=ahead();
+      E.spawn(Math.random()<.5?'powerB':'powerS',{at:p.clone().add(new THREE.Vector3(0,8,0)),
+        vel:new THREE.Vector3(0,0,10),spin:1.4});
+    }
+  },
 
-const aim={x:W/2,y:H/2,down:false};
-let last=performance.now();   // declared here so the resume handlers below cannot hit a TDZ
-// the parent focuses this iframe when the player dives back in, and any input means
-// they are here; either resumes the loop that __arcStop paused on exit
-function resume(){if(FS.paused){FS.paused=false;last=performance.now();}}
-addEventListener('focus',resume);
-addEventListener('pointerdown',resume,true);
-addEventListener('keydown',resume,true);
-addEventListener('visibilitychange',()=>{if(!document.hidden)last=performance.now();});
-function toGame(e){const r=glc.getBoundingClientRect();
-  return{x:(e.clientX-r.left)/r.width*W,y:(e.clientY-r.top)/r.height*H};}
-glc.addEventListener('pointermove',e=>{const p=toGame(e);aim.x=p.x;aim.y=p.y;});
-glc.addEventListener('pointerdown',e=>{e.preventDefault();const p=toGame(e);
-  aim.x=p.x;aim.y=p.y;aim.down=true;ac();FS.shoot(p.x,p.y);});
-glc.addEventListener('pointerup',()=>aim.down=false);
-addEventListener('keydown',e=>{
-  if(e.key==='Escape'){try{parent.__arcExit&&parent.__arcExit();}catch(_){}return;}
-  if(e.repeat)return;ac();
-  if(e.key===' '){FS.shoot(aim.x,aim.y);aim.down=true;}
+  hud(E){
+    const ui=E.ui;
+    E.clearHUD();
+    // top bar
+    E.drawTopBar();
+    // shield pips
+    for(let i=0;i<8;i++){
+      ui.fillStyle=i<FS.shield?'#39c463':'rgba(255,255,255,.12)';
+      ui.beginPath();ui.roundRect(W-30-i*16,H-24,12,12,3);ui.fill();
+    }
+    if(FS.power==='bazooka')E.txt('BAZOOKA x'+FS.powerAmmo,14,H-16,15,'#ff7a1a','left');
+    // stage banner
+    E.drawBanner();
+    // crosshair
+    E.drawCrosshair();
+    // modal screens
+    E.drawAttract();
+    E.drawGameOver();
+  },
 });
-addEventListener('keyup',e=>{if(e.key===' ')aim.down=false;});
 
-function txt(s,x,y,size,col,align){
-  ui.font='bold '+size+'px "Courier New",monospace';ui.fillStyle=col;
-  ui.textAlign=align||'center';ui.fillText(s,x,y);
-}
-function drawHUD(){
-  ui.clearRect(0,0,W,H);
-  // top bar
-  txt('FINAL SHOT',14,30,17,'#ffd23d','left');
-  txt('SCORE '+String(FS.score).padStart(7,'0'),W/2,30,17,'#fff');
-  txt('HI '+String(FS.hi).padStart(7,'0'),W-14,30,17,'#9ce0ff','right');
-  // shield pips
-  for(let i=0;i<8;i++){
-    ui.fillStyle=i<FS.shield?'#39c463':'rgba(255,255,255,.12)';
-    ui.beginPath();ui.roundRect(W-30-i*16,H-24,12,12,3);ui.fill();
-  }
-  if(FS.power==='bazooka')txt('BAZOOKA x'+FS.powerAmmo,14,H-16,15,'#ff7a1a','left');
-  // stage banner
-  if(FS.flashT>0){ui.globalAlpha=Math.min(1,FS.flashT);
-    txt(FS.flashMsg,W/2,H/2-60,42,'#ffd23d');ui.globalAlpha=1;}
-  // crosshair
-  const cx=aim.x,cy=aim.y;
-  ui.strokeStyle='#fff';ui.lineWidth=2;
-  ui.beginPath();ui.arc(cx,cy,13,0,Math.PI*2);ui.stroke();
-  ui.beginPath();ui.moveTo(cx-20,cy);ui.lineTo(cx-6,cy);ui.moveTo(cx+6,cy);ui.lineTo(cx+20,cy);
-  ui.moveTo(cx,cy-20);ui.lineTo(cx,cy-6);ui.moveTo(cx,cy+6);ui.lineTo(cx,cy+20);ui.stroke();
-  // modal screens
-  if(FS.mode==='attract'){
-    ui.fillStyle='rgba(4,5,10,.72)';ui.fillRect(0,0,W,H);
-    txt('FINAL SHOT',W/2,H/2-70,58,'#ffd23d');
-    txt('MOBILE SUIT ARCADE',W/2,H/2-30,20,'#fff');
-    txt('CLICK / TAP TO START',W/2,H/2+40,26,'#fff');
-    txt('shoot: click or SPACE  ·  exit: ESC',W/2,H/2+80,14,'#9ce0ff');
-    txt('an MSL ARCADE original',W/2,H-30,12,'rgba(255,255,255,.5)');
-  }
-  if(FS.mode==='over'){
-    ui.fillStyle='rgba(4,5,10,.72)';ui.fillRect(0,0,W,H);
-    txt('GAME OVER',W/2,H/2-20,54,'#ff5050');
-    txt('SCORE '+String(FS.score).padStart(7,'0'),W/2,H/2+30,24,'#fff');
-    if(FS.over>1.2)txt('CLICK TO CONTINUE',W/2,H/2+80,18,'#9ce0ff');
-  }
-}
+// FINAL SHOT's own state rides on the engine state object, same shape as the pre-extraction FS
+const FS=E.state;
+FS.waveT=0;FS.missileT=0;FS.powerT=0;FS.power=null;FS.powerAmmo=0;
 
-function loop(){requestAnimationFrame(loop);
-  const now=performance.now(), dt=Math.min((now-last)/1000,0.033);last=now;
-  // The parent hides this iframe with opacity, not display, so rAF keeps firing after
-  // the player leaves the cabinet. Without this gate a second WebGL context renders a
-  // full scene for the rest of the session on top of the site's own 3D scene.
-  if(FS.paused)return;   // browsers already stop rAF for hidden tabs, so paused is the only gate needed
-  FS.update(dt);FS.render();}
-loop();
-
-window.__arcGame='gundam';
-window.__arcStop=()=>{if(AC&&AC.state==='running')AC.suspend();
-  if(FS.mode==='play')FS.mode='attract';
-  FS.paused=true;};
-window.__arcStep=(n,dt)=>{n=n||1;dt=dt||.016;for(let i=0;i<n;i++)FS.update(dt);FS.render();};
-window.__arcShoot=(x,y)=>FS.shoot(x,y);
-window.__arcEnts=()=>FS.ents.filter(e=>!e.dead).map(e=>({k:e.kind,x:e.sx,y:e.sy,friendly:!!e.k.friendly}));
+E.start();   // builds stage 0, installs the six window.__arc* hooks, starts the rAF loop
 
 if(location.hash==='#selftest')(async()=>{
   const A=(c,m)=>{if(!c)throw new Error('FAIL: '+m);};
@@ -486,41 +205,41 @@ if(location.hash==='#selftest')(async()=>{
   A(typeof window.__arcStop==='function','__arcStop exists');
   A(window.__arcGame==='gundam','__arcGame is gundam');
   A(FS.mode==='attract','starts in attract');
-  const p=railPos(0,new THREE.Vector3()), p2=railPos(0.5,new THREE.Vector3());
+  const p=E.railPos(0,new THREE.Vector3()), p2=E.railPos(0.5,new THREE.Vector3());
   A(p.distanceTo(p2)>1,'rail actually travels');
   FS.start();
   A(FS.mode==='play'&&FS.shield===6&&FS.score===0,'start resets state');
   window.__arcStep(10,0.016);
   A(FS.t>0.1,'stepping advances time');
-  A(stageGroup&&stageGroup.children.length>10,'stage 0 built with content');
-  const n0=stageGroup.children.length;
-  buildStage(1);
-  A(stageGroup.children.length>0,'stage 1 built');
-  A(stageGroup!==null,'stage group replaced not leaked');
-  buildStage(0);
-  A(Math.abs(stageGroup.children.length-n0)<2,'stage 0 rebuilds deterministically');
+  A(E.getStageGroup()&&E.getStageGroup().children.length>10,'stage 0 built with content');
+  const n0=E.getStageGroup().children.length;
+  E.buildStage(1);
+  A(E.getStageGroup().children.length>0,'stage 1 built');
+  A(E.getStageGroup()!==null,'stage group replaced not leaked');
+  E.buildStage(0);
+  A(Math.abs(E.getStageGroup().children.length-n0)<2,'stage 0 rebuilds deterministically');
 
   // wait for the enemy clone pool so spawn has something to hand out
-  await new Promise(r=>{const w=()=>(POOL['fs-mech']&&POOL['fs-mech'].length)?r():setTimeout(w,50);w();});
+  await new Promise(r=>{const w=()=>(E.pool['fs-mech']&&E.pool['fs-mech'].length)?r():setTimeout(w,50);w();});
   FS.start();
   const before=FS.score;
-  const e=spawn('mech',{at:new THREE.Vector3(0,12,-40)});
+  const e=E.spawn('mech',{at:new THREE.Vector3(0,12,-40)});
   A(e&&FS.ents.length===1,'spawn adds an entity');
   window.__arcStep(2,0.016);
   A(e.sx>=0&&e.sx<=960,'entity projects into screen space');
-  A(hitTest(e.sx,e.sy)===e,'hitTest finds it at its own screen position');
-  A(hitTest(5,5)===null,'hitTest misses far away');
-  killEnt(e);killEnt(e);              // double-kill must not double-score
+  A(E.hitTest(e.sx,e.sy)===e,'hitTest finds it at its own screen position');
+  A(E.hitTest(5,5)===null,'hitTest misses far away');
+  E.killEnt(e);E.killEnt(e);          // double-kill must not double-score
   A(FS.score===before+300,'kill scores exactly once');
   A(window.__arcEnts().length===0,'dead entities leave __arcEnts');
   FS.ents.length=0;
 
-  const fxBefore=FXP.count;
-  boom(new THREE.Vector3(0,10,-30));
-  A(FXP.count>fxBefore,'boom emits particles');
-  spark(new THREE.Vector3(0,10,-30));
-  A(typeof drawHUD==='function','drawHUD defined');
-  FS.mode='over';drawHUD();FS.mode='attract';drawHUD();FS.mode='play';drawHUD();
+  const fxBefore=E.fxCount();
+  E.boom(new THREE.Vector3(0,10,-30));
+  A(E.fxCount()>fxBefore,'boom emits particles');
+  E.spark(new THREE.Vector3(0,10,-30));
+  A(typeof E.drawHUD==='function','drawHUD defined');
+  FS.mode='over';E.drawHUD();FS.mode='attract';E.drawHUD();FS.mode='play';E.drawHUD();
 
   window.__selftest='OK';
   console.log('SELFTEST OK');
