@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-<title>OTTI ARCADE</title>
+<title>MSL ARCADE</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
   html,body{width:100%;height:100%;overflow:hidden;background:#050508;font-family:'Courier New',monospace;
@@ -422,7 +422,7 @@ function popPos(){const edge=Math.random();
    ============================================================ */
 const id=(()=>{const h=(location.hash||'').replace('#','');return GAMES[h]?h:'gundam';})();
 const C=GAMES[id];
-document.title='OTTI ARCADE — '+C.title;
+document.title='MSL ARCADE: '+C.title;
 
 const ST={
   mode:'attract', tick:0, t:0, score:0, hi:0, stage:0, ents:[], fx:[],
@@ -581,7 +581,7 @@ const ST={
       if(C.hasSlow)txt('E = EXCEED slow-mo when meter is full',W/2,H/2+102,13,'#9ce0ff');
       if(C.gun.heat)txt('hold to fire full-auto — watch the heat',W/2,H/2+102,13,'#ffb0a0');
       if(C.gun.pump)txt('3 shells, then pump (R). Bucks only — no does!',W/2,H/2+102,13,'#ffd8a8');
-      txt('an OTTI RECORDS arcade original',W/2,H-24,11,'#667');
+      txt('an MSL ARCADE original',W/2,H-24,11,'#667');
     }
     if(this.mode==='over'){
       g.fillStyle='rgba(0,0,0,.6)';g.fillRect(0,0,W,H);
