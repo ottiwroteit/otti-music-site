@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>OTTI ARCADE — FINAL SHOT</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{width:100%;height:100%;overflow:hidden;background:#050508;font-family:'Courier New',monospace;
+    user-select:none;-webkit-user-select:none;cursor:none}
+  #wrap{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:960px;height:540px}
+  #gl,#ui{position:absolute;left:0;top:0;width:960px;height:540px;cursor:none}
+  #ui{pointer-events:none}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="gl" width="960" height="540"></canvas><canvas id="ui" width="960" height="540"></canvas></div>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js",
+"three/addons/":"https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+import {MeshoptDecoder} from 'three/addons/libs/meshopt_decoder.module.js';
+
+const W=960,H=540;
+const glc=document.getElementById('gl'), uic=document.getElementById('ui'), ui=uic.getContext('2d');
+function fit(){const s=Math.min(innerWidth/W,innerHeight/H);
+  document.getElementById('wrap').style.transform=`translate(-50%,-50%) scale(${s})`;}
+addEventListener('resize',fit);fit();
+
+const renderer=new THREE.WebGLRenderer({canvas:glc,antialias:true});
+renderer.setPixelRatio(1);                    // hard budget: this runs in an iframe over a 3D site
+renderer.setSize(W,H,false);
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.1;
+const scene=new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(62,W/H,0.1,900);
+const gltfL=new GLTFLoader();
+gltfL.setMeshoptDecoder(MeshoptDecoder);      // meshopt files silently fail to load without this
+
+// ---- rail: authored spline the camera rides; u in 0..1 loops per stage ----
+const RAILS=[
+  new THREE.CatmullRomCurve3([              // stage 0: city, weaving between towers
+    new THREE.Vector3(0,14,0),   new THREE.Vector3(14,16,-60),
+    new THREE.Vector3(-10,12,-130), new THREE.Vector3(8,18,-200),
+    new THREE.Vector3(0,15,-280),
+  ],false,'catmullrom',0.5),
+  new THREE.CatmullRomCurve3([              // stage 1: space, wider and calmer
+    new THREE.Vector3(0,0,0),    new THREE.Vector3(-18,6,-70),
+    new THREE.Vector3(12,-4,-150), new THREE.Vector3(-6,8,-230),
+    new THREE.Vector3(0,0,-300),
+  ],false,'catmullrom',0.5),
+];
+function rail(){return RAILS[FS.stage%RAILS.length];}
+function railPos(u,out){return rail().getPointAt(Math.min(0.999,Math.max(0,u)),out);}
+function railLook(u,out){return rail().getPointAt(Math.min(0.999,Math.max(0,u+0.06)),out);}
+
+const _rp=new THREE.Vector3(), _rl=new THREE.Vector3();
+function driveCamera(){
+  const u=(FS.t*0.035)%1;                     // ~28s per stage lap
+  camera.position.copy(railPos(u,_rp));
+  camera.lookAt(railLook(u,_rl));
+  camera.rotation.z=Math.sin(FS.t*0.5)*0.06;  // gentle bank so the ride reads as flight
+}
+
+/* ---------- tiny synth SFX (no samples anywhere), ported verbatim from assets/arcade/index.html ---------- */
+let AC=null,master=null;
+function ac(){if(!AC){AC=new (window.AudioContext||window.webkitAudioContext)();master=AC.createGain();master.gain.value=.5;master.connect(AC.destination);}AC.resume();return AC;}
+function blip(f0,f1,dur,type,vol,noise){
+  if(!AC)return;const t=AC.currentTime;
+  if(noise){const n=AC.createBufferSource(),len=AC.sampleRate*dur,b=AC.createBuffer(1,len,AC.sampleRate),d=b.getChannelData(0);
+    for(let i=0;i<len;i++)d[i]=(Math.random()*2-1)*(1-i/len);n.buffer=b;
+    const gn=AC.createGain();gn.gain.setValueAtTime(vol,t);gn.gain.exponentialRampToValueAtTime(.001,t+dur);
+    const fl=AC.createBiquadFilter();fl.type='bandpass';fl.frequency.setValueAtTime(f0,t);fl.frequency.exponentialRampToValueAtTime(Math.max(f1,40),t+dur);
+    n.connect(fl);fl.connect(gn);gn.connect(master);n.start(t);n.stop(t+dur);return;}
+  const o=AC.createOscillator(),gn=AC.createGain();o.type=type||'square';
+  o.frequency.setValueAtTime(f0,t);o.frequency.exponentialRampToValueAtTime(Math.max(f1,30),t+dur);
+  gn.gain.setValueAtTime(vol,t);gn.gain.exponentialRampToValueAtTime(.001,t+dur);
+  o.connect(gn);gn.connect(master);o.start(t);o.stop(t+dur);
+}
+const SFX={
+  shot:()=>blip(900,120,.09,'square',.30,true),
+  hit:()=>blip(300,900,.08,'square',.22),
+  big:()=>blip(140,30,.5,'sawtooth',.4,true),
+  bad:()=>blip(200,60,.35,'sawtooth',.35),
+  power:()=>{blip(440,880,.12,'square',.25);setTimeout(()=>blip(660,1320,.12,'square',.25),90);},
+  over:()=>{blip(400,50,.8,'sawtooth',.35);},
+  stage:()=>{[523,659,784,1046].forEach((f,i)=>setTimeout(()=>blip(f,f,.14,'square',.22),i*110));},
+};
+
+const FS={
+  mode:'attract', t:0, tick:0, stage:0, score:0, hi:0, shield:6,
+  power:null, powerAmmo:0, ents:[], flashMsg:'', flashT:0, shake:0, over:0,
+  start(){this.mode='play';this.t=0;this.tick=0;this.stage=0;this.score=0;this.shield=6;
+    this.power=null;this.powerAmmo=0;this.ents.length=0;this.flashMsg='STAGE 1';this.flashT=2;SFX.stage();},
+  hurt(n){if(this.mode!=='play')return;this.shake=.4;SFX.bad();
+    this.shield-=n;if(this.shield<=0)this.gameOver();},
+  gameOver(){this.mode='over';this.over=0;this.hi=Math.max(this.hi,this.score);SFX.over();},
+  nextStage(){this.stage++;SFX.stage();this.flashMsg='STAGE '+(this.stage+1);this.flashT=2;
+    if(this.stage>=2)this.gameOver();},
+  shoot(x,y){
+    if(this.mode==='attract'){this.start();return;}
+    if(this.mode==='over'){if(this.over>1.2)this.mode='attract';return;}
+    SFX.shot();
+  },
+  update(dt){
+    this.t+=dt;this.tick++;
+    if(this.flashT>0)this.flashT-=dt;
+    if(this.shake>0)this.shake=Math.max(0,this.shake-dt*2);
+    if(this.mode==='over')this.over+=dt;
+    driveCamera();
+    if(this.mode==='play'&&this.tick>0&&this.tick%1500===0)this.nextStage();
+    window.__arcState={game:'gundam',mode:this.mode,score:this.score,stage:this.stage,
+      ents:this.ents.filter(e=>!e.dead).length,shield:this.shield,audio:AC?AC.state:'none'};
+  },
+  render(){renderer.render(scene,camera);drawHUD();},
+};
+
+const aim={x:W/2,y:H/2,down:false};
+function toGame(e){const r=glc.getBoundingClientRect();
+  return{x:(e.clientX-r.left)/r.width*W,y:(e.clientY-r.top)/r.height*H};}
+glc.addEventListener('pointermove',e=>{const p=toGame(e);aim.x=p.x;aim.y=p.y;});
+glc.addEventListener('pointerdown',e=>{e.preventDefault();const p=toGame(e);
+  aim.x=p.x;aim.y=p.y;aim.down=true;ac();FS.shoot(p.x,p.y);});
+glc.addEventListener('pointerup',()=>aim.down=false);
+addEventListener('keydown',e=>{
+  if(e.key==='Escape'){try{parent.__arcExit&&parent.__arcExit();}catch(_){}return;}
+  if(e.repeat)return;ac();
+  if(e.key===' '){FS.shoot(aim.x,aim.y);aim.down=true;}
+});
+addEventListener('keyup',e=>{if(e.key===' ')aim.down=false;});
+
+function drawHUD(){
+  ui.clearRect(0,0,W,H);
+  ui.font='bold 16px "Courier New",monospace';ui.fillStyle='#ffd23d';ui.textAlign='left';
+  ui.fillText('SCORE '+String(FS.score).padStart(7,'0'),14,28);
+}
+
+let last=performance.now();
+function loop(){requestAnimationFrame(loop);
+  const now=performance.now(), dt=Math.min((now-last)/1000,0.033);last=now;
+  FS.update(dt);FS.render();}
+loop();
+
+window.__arcGame='gundam';
+window.__arcStop=()=>{if(AC&&AC.state==='running')AC.suspend();if(FS.mode==='play')FS.mode='attract';};
+window.__arcStep=(n,dt)=>{n=n||1;dt=dt||.016;for(let i=0;i<n;i++)FS.update(dt);FS.render();};
+window.__arcShoot=(x,y)=>FS.shoot(x,y);
+window.__arcEnts=()=>FS.ents.filter(e=>!e.dead).map(e=>({k:e.kind,x:e.sx,y:e.sy,friendly:false}));
+
+if(location.hash==='#selftest'){
+  const A=(c,m)=>{if(!c)throw new Error('FAIL: '+m);};
+  A(typeof window.__arcStep==='function','__arcStep exists');
+  A(typeof window.__arcShoot==='function','__arcShoot exists');
+  A(typeof window.__arcEnts==='function','__arcEnts exists');
+  A(typeof window.__arcStop==='function','__arcStop exists');
+  A(window.__arcGame==='gundam','__arcGame is gundam');
+  A(FS.mode==='attract','starts in attract');
+  const p=railPos(0,new THREE.Vector3()), p2=railPos(0.5,new THREE.Vector3());
+  A(p.distanceTo(p2)>1,'rail actually travels');
+  FS.start();
+  A(FS.mode==='play'&&FS.shield===6&&FS.score===0,'start resets state');
+  window.__arcStep(10,0.016);
+  A(FS.t>0.1,'stepping advances time');
+  console.log('SELFTEST OK');
+}
+</script>
+</body>
+</html>
