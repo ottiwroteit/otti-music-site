@@ -212,9 +212,11 @@ function spawn(kindKey,opts){
   if(!obj)return null;
   const at=(opts&&opts.at)||new THREE.Vector3(0,10,-60);
   obj.position.copy(at);
-  const e={kind:kindKey,k,obj,hp:k.hp,t:0,dead:0,sx:-1,sy:-1,behind:false,
+  const e={kind:kindKey,k,obj,hp:k.hp,t:0,dead:0,sx:-1,sy:-1,behind:false,baseY:at.y,
     vel:(opts&&opts.vel)||new THREE.Vector3(0,0,0),spin:(opts&&opts.spin)||0};
-  FS.ents.push(e);return e;
+  FS.ents.push(e);
+  projectEnt(e);   // project immediately: an unprojected sx/sy of -1 is clickable near the top-left corner
+  return e;
 }
 
 const _pv=new THREE.Vector3();
@@ -260,6 +262,10 @@ const FS={
     this.shield-=n;if(this.shield<=0)this.gameOver();},
   gameOver(){this.mode='over';this.over=0;this.hi=Math.max(this.hi,this.score);SFX.over();},
   nextStage(){this.stage++;
+    // recycle the old stage's enemies: the rail changes under them, so they would
+    // hang in the new world holding pool slots until the camera happened to pass each one
+    for(const e of this.ents)if(!e.dead)returnToPool(e.k.file,e.obj);
+    this.ents.length=0;
     buildStage(this.stage);
     SFX.stage();this.flashMsg='STAGE '+(this.stage+1);this.flashT=2;
     if(this.stage>=2)this.gameOver();},
@@ -284,7 +290,7 @@ const FS={
       if(e.dead)continue;
       e.t+=dt;
       e.obj.position.addScaledVector(e.vel,dt);
-      if(e.kind==='mech')e.obj.position.y+=Math.sin(e.t*2)*0.02;      // hover bob
+      if(e.kind==='mech')e.obj.position.y=e.baseY+Math.sin(e.t*2)*0.35;  // hover bob about the spawn height, not a drift
       e.obj.lookAt(camera.position);                                  // face first, then layer motion on top
       if(e.kind==='pod')e.obj.rotation.z+=Math.sin(e.t*3)*0.25;       // banking
       if(e.spin)e.obj.rotation.y+=Math.sin(e.t*e.spin)*0.4;
@@ -298,20 +304,22 @@ const FS={
     }
     if(this.tick%30===0)this.ents=this.ents.filter(e=>!e.dead);
     if(this.mode==='play'){
-      const ahead=()=>{const u=(this.t*0.035)%1;
-        return railPos(Math.min(0.999,u+0.14),new THREE.Vector3());};
-      if(this.tick%Math.max(30,70-this.stage*10)===0){
+      // spawns need lead time ahead of the camera; near the end of a lap there is none,
+      // and the camera teleports back to the start, so suppress spawning in that window
+      const u=(this.t*0.035)%1, canSpawn=u<0.84;
+      const ahead=()=>railPos(u+0.14,new THREE.Vector3());
+      if(canSpawn&&this.tick%Math.max(30,70-this.stage*10)===0){
         const p=ahead(), side=Math.random()<.5?-1:1;
         if(Math.random()<.6)spawn('mech',{at:p.clone().add(new THREE.Vector3(side*rnd(6,18),rnd(-4,6),0))});
         else spawn('pod',{at:p.clone().add(new THREE.Vector3(side*30,rnd(2,14),0)),
           vel:new THREE.Vector3(-side*14,0,6),spin:0.6});
       }
-      if(this.tick%150===100){
+      if(canSpawn&&this.tick%150===100){
         const p=ahead();
         const v=camera.position.clone().sub(p).normalize().multiplyScalar(26);
         spawn('missile',{at:p,vel:v});
       }
-      if(this.tick%600===400){
+      if(canSpawn&&this.tick%600===400){
         const p=ahead();
         spawn(Math.random()<.5?'powerB':'powerS',{at:p.clone().add(new THREE.Vector3(0,8,0)),
           vel:new THREE.Vector3(0,0,10),spin:1.4});
