@@ -292,8 +292,10 @@ function killEnt(e){
   returnToPool(e.k.file,e.obj);
 }
 
+const STAGE_SECONDS=1/0.035;   // exactly one lap of the rail (driveCamera uses t*0.035)
 const FS={
   mode:'attract', t:0, tick:0, stage:0, score:0, hi:0, shield:6,
+  waveT:0, missileT:0, powerT:0, paused:false,
   power:null, powerAmmo:0, ents:[], flashMsg:'', flashT:0, shake:0, over:0,
   start(){this.mode='play';this.t=0;this.tick=0;this.stage=0;this.score=0;this.shield=6;
     this.power=null;this.powerAmmo=0;
@@ -310,9 +312,10 @@ const FS={
     // hang in the new world holding pool slots until the camera happened to pass each one
     for(const e of this.ents)if(!e.dead)returnToPool(e.k.file,e.obj);
     this.ents.length=0;
+    this.t=0;this.waveT=0;this.missileT=0;this.powerT=0;   // new stage, new lap: restart the rail at its start
+    if(this.stage>=2){this.gameOver();return;}             // check before building a world we would discard
     buildStage(this.stage);
-    SFX.stage();this.flashMsg='STAGE '+(this.stage+1);this.flashT=2;
-    if(this.stage>=2)this.gameOver();},
+    SFX.stage();this.flashMsg='STAGE '+(this.stage+1);this.flashT=2;},
   shoot(x,y){
     if(this.mode==='attract'){this.start();return;}
     if(this.mode==='over'){if(this.over>1.2)this.mode='attract';return;}
@@ -353,24 +356,33 @@ const FS={
       // and the camera teleports back to the start, so suppress spawning in that window
       const u=(this.t*0.035)%1, canSpawn=u<0.84;
       const ahead=()=>railPos(u+0.14,new THREE.Vector3());
-      if(canSpawn&&this.tick%Math.max(30,70-this.stage*10)===0){
+      // every cadence below is in SECONDS, on the same clock as the rail. Frame-counted
+      // cadence desynced from the time-driven camera and made run length scale with refresh rate.
+      this.waveT+=dt;this.missileT+=dt;this.powerT+=dt;
+      const waveEvery=Math.max(0.5,(70-this.stage*10)/60);
+      if(canSpawn&&this.waveT>=waveEvery){
+        this.waveT=0;
         const p=ahead(), side=Math.random()<.5?-1:1;
         if(Math.random()<.6)spawn('mech',{at:p.clone().add(new THREE.Vector3(side*rnd(6,18),rnd(-4,6),0))});
         else spawn('pod',{at:p.clone().add(new THREE.Vector3(side*30,rnd(2,14),0)),
           vel:new THREE.Vector3(-side*14,0,6),spin:0.6});
       }
-      if(canSpawn&&this.tick%150===100){
+      if(canSpawn&&this.missileT>=2.5){
+        this.missileT=0;
         const p=ahead();
         const v=camera.position.clone().sub(p).normalize().multiplyScalar(26);
         spawn('missile',{at:p,vel:v});
       }
-      if(canSpawn&&this.tick%600===400){
+      if(canSpawn&&this.powerT>=10){
+        this.powerT=0;
         const p=ahead();
         spawn(Math.random()<.5?'powerB':'powerS',{at:p.clone().add(new THREE.Vector3(0,8,0)),
           vel:new THREE.Vector3(0,0,10),spin:1.4});
       }
+      // one stage is one full lap of its rail, so the stage never outlives the spline
+      // and the camera never cuts back to the start mid-stage
+      if(this.t>=STAGE_SECONDS)this.nextStage();
     }
-    if(this.mode==='play'&&this.tick>0&&this.tick%1500===0)this.nextStage();
     window.__arcState={game:'gundam',mode:this.mode,score:this.score,stage:this.stage,
       ents:this.ents.filter(e=>!e.dead).length,shield:this.shield,audio:AC?AC.state:'none'};
   },
@@ -386,6 +398,14 @@ const FS={
 buildStage(0);
 
 const aim={x:W/2,y:H/2,down:false};
+let last=performance.now();   // declared here so the resume handlers below cannot hit a TDZ
+// the parent focuses this iframe when the player dives back in, and any input means
+// they are here; either resumes the loop that __arcStop paused on exit
+function resume(){if(FS.paused){FS.paused=false;last=performance.now();}}
+addEventListener('focus',resume);
+addEventListener('pointerdown',resume,true);
+addEventListener('keydown',resume,true);
+addEventListener('visibilitychange',()=>{if(!document.hidden)last=performance.now();});
 function toGame(e){const r=glc.getBoundingClientRect();
   return{x:(e.clientX-r.left)/r.width*W,y:(e.clientY-r.top)/r.height*H};}
 glc.addEventListener('pointermove',e=>{const p=toGame(e);aim.x=p.x;aim.y=p.y;});
@@ -441,14 +461,19 @@ function drawHUD(){
   }
 }
 
-let last=performance.now();
 function loop(){requestAnimationFrame(loop);
   const now=performance.now(), dt=Math.min((now-last)/1000,0.033);last=now;
+  // The parent hides this iframe with opacity, not display, so rAF keeps firing after
+  // the player leaves the cabinet. Without this gate a second WebGL context renders a
+  // full scene for the rest of the session on top of the site's own 3D scene.
+  if(FS.paused)return;   // browsers already stop rAF for hidden tabs, so paused is the only gate needed
   FS.update(dt);FS.render();}
 loop();
 
 window.__arcGame='gundam';
-window.__arcStop=()=>{if(AC&&AC.state==='running')AC.suspend();if(FS.mode==='play')FS.mode='attract';};
+window.__arcStop=()=>{if(AC&&AC.state==='running')AC.suspend();
+  if(FS.mode==='play')FS.mode='attract';
+  FS.paused=true;};
 window.__arcStep=(n,dt)=>{n=n||1;dt=dt||.016;for(let i=0;i<n;i++)FS.update(dt);FS.render();};
 window.__arcShoot=(x,y)=>FS.shoot(x,y);
 window.__arcEnts=()=>FS.ents.filter(e=>!e.dead).map(e=>({k:e.kind,x:e.sx,y:e.sy,friendly:!!e.k.friendly}));
