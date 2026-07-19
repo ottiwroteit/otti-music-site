@@ -343,6 +343,13 @@ const arcchip=document.getElementById('arcchip');
 const screenframe=document.getElementById('screenframe');
 const mpcframe=document.getElementById('mpcframe');
 const arcframe=document.getElementById('arcframe');
+// FINAL SHOT runs the 3D rail-shooter build; the other seven stay on the canvas engine.
+// The per-game query is what forces a real iframe reload (hash-only changes are fragment navigations).
+function arcSrcFor(game){
+  return game==='gundam'
+    ? 'assets/arcade/final-shot-3d.html?g=gundam#gundam'
+    : 'assets/arcade/index.html?g='+game+'#'+game;
+}
 const focusStates=['globe','screen','mpc','arc'];
 window.__mpcExit=()=>setCam('wide');    // the MPC app calls this on ESC
 window.__arcExit=()=>setCam('arcade');  // an arcade game calls this on ESC -> back to the wing
@@ -372,7 +379,7 @@ function setCam(s){
     if(curArc){
       // query differs per game -> guarantees a REAL reload (hash-only changes are fragment
       // navigations and the engine reads its hash once at load)
-      const want='assets/arcade/index.html?g='+curArc.game+'#'+curArc.game;
+      const want=arcSrcFor(curArc.game);
       if(arcframe.getAttribute('src')!==want)arcframe.src=want;
       try{arcframe.contentWindow.focus();}catch(_){}
     }
@@ -1539,6 +1546,8 @@ if(location.hash==='#selftest'){
   A(arcUnits.length===9,'arcade units built');
   A(arcUnits.every(u=>u.face&&u.obj&&u.game),'arcade unit shape');
   A(new Set(arcUnits.map(u=>u.game)).size===8,'8 distinct games');
+  A(arcSrcFor('gundam').startsWith('assets/arcade/final-shot-3d.html'),'gundam routes to the 3D game');
+  A(arcSrcFor('vcop2').startsWith('assets/arcade/index.html'),'other games keep the canvas engine');
   A(!!CAMS.arcade,'arcade cam state');
   setCam('arcade');A(camState==='arcade','enter arcade');
   setCam('wide');A(camState==='wide','exit arcade');
