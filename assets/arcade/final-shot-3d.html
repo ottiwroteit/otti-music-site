@@ -68,7 +68,7 @@ function driveCamera(){
 // ---- procedural stage worlds: burning neon city (stage 0), space (stage 1) ----
 let stageGroup=null;
 function disposeGroup(gp){
-  gp.traverse(o=>{if(o.isMesh){o.geometry.dispose();
+  gp.traverse(o=>{if(o.isMesh||o.isPoints){o.geometry.dispose();   // Points too: the starfield leaks otherwise
     (Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m&&m.dispose());}});
 }
 // deterministic pseudo-random so a rebuilt stage is identical (selftest relies on this)
@@ -77,7 +77,7 @@ function srnd(seed){let s=seed>>>0;return()=>((s=(s*1664525+1013904223)>>>0)/429
 function buildStage(n){
   if(stageGroup){scene.remove(stageGroup);disposeGroup(stageGroup);}
   stageGroup=new THREE.Group();scene.add(stageGroup);
-  const R=srnd(n===0?1337:7331);
+  const R=srnd(1337+n*4099);      // seeded per stage index so every rebuild of stage n is identical
   if(n%2===0)buildCity(stageGroup,R); else buildSpace(stageGroup,R);
   return stageGroup;
 }
@@ -163,7 +163,9 @@ const FS={
   mode:'attract', t:0, tick:0, stage:0, score:0, hi:0, shield:6,
   power:null, powerAmmo:0, ents:[], flashMsg:'', flashT:0, shake:0, over:0,
   start(){this.mode='play';this.t=0;this.tick=0;this.stage=0;this.score=0;this.shield=6;
-    this.power=null;this.powerAmmo=0;this.ents.length=0;this.flashMsg='STAGE 1';this.flashT=2;SFX.stage();},
+    this.power=null;this.powerAmmo=0;this.ents.length=0;this.flashMsg='STAGE 1';this.flashT=2;
+    buildStage(0);   // replay must rebuild the world; stage state and visible world would desync otherwise
+    SFX.stage();},
   hurt(n){if(this.mode!=='play')return;this.shake=.4;SFX.bad();
     this.shield-=n;if(this.shield<=0)this.gameOver();},
   gameOver(){this.mode='over';this.over=0;this.hi=Math.max(this.hi,this.score);SFX.over();},
