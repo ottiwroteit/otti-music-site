@@ -159,11 +159,101 @@ const SFX={
   stage:()=>{[523,659,784,1046].forEach((f,i)=>setTimeout(()=>blip(f,f,.14,'square',.22),i*110));},
 };
 
+/* ---------- enemies: pooled Tripo GLB clones, screen-space hit detection ---------- */
+const rnd=(a,b)=>a+Math.random()*(b-a);
+
+// Task 5 replaces these with real particles; stubs keep combat runnable today.
+function boom(_p){}
+function spark(_p){}
+
+const KINDS={
+  mech   :{hp:2,pts:300,file:'fs-mech',   r:3.2,size:6.0},
+  pod    :{hp:1,pts:200,file:'fs-pod',    r:2.2,size:3.4},
+  missile:{hp:1,pts:100,file:'fs-missile',r:1.4,size:2.2,harm:true},
+  powerB :{hp:1,pts:0,  file:'fs-pod',    r:2.0,size:3.0,power:'bazooka'},
+  powerS :{hp:1,pts:0,  file:'fs-pod',    r:2.0,size:3.0,power:'shield'},
+};
+const POOL={};                      // file -> array of ready clones
+const BASE={};                      // file -> largest dimension at scale 1
+const MAX_LIVE=12;                  // hard budget: never allocate a clone during play
+
+['fs-mech','fs-pod','fs-missile'].forEach(file=>{
+  POOL[file]=[];
+  gltfL.load(`../props/${file}.glb`,g=>{
+    const src=g.scene;
+    src.traverse(c=>{if(c.isMesh&&c.material){
+      (Array.isArray(c.material)?c.material:[c.material]).forEach(m=>{
+        m.emissiveIntensity=0;      // house rule: generated GLBs ship hot emissives
+        m.envMapIntensity=.6;
+      });
+    }});
+    // measure once at scale 1; re-measuring a scaled clone would reset it to scale 1
+    const dim=new THREE.Box3().setFromObject(src).getSize(new THREE.Vector3());
+    BASE[file]=Math.max(1e-4,dim.x,dim.y,dim.z);
+    for(let i=0;i<6;i++){const c=src.clone(true);c.visible=false;scene.add(c);POOL[file].push(c);}
+  },undefined,()=>console.warn('enemy GLB failed: '+file));  // silent skip, game still playable
+});
+
+function takeFromPool(file,size){
+  const p=POOL[file];
+  if(!p||!p.length)return null;      // not loaded yet, or pool exhausted -> skip this spawn
+  const o=p.pop();
+  o.scale.setScalar(size/BASE[file]);
+  o.rotation.set(0,0,0);
+  o.visible=true;return o;
+}
+function returnToPool(file,o){o.visible=false;POOL[file]&&POOL[file].push(o);}
+
+function spawn(kindKey,opts){
+  if(FS.ents.filter(e=>!e.dead).length>=MAX_LIVE)return null;
+  const k=KINDS[kindKey];
+  if(!k)return null;
+  const obj=takeFromPool(k.file,k.size);
+  if(!obj)return null;
+  const at=(opts&&opts.at)||new THREE.Vector3(0,10,-60);
+  obj.position.copy(at);
+  const e={kind:kindKey,k,obj,hp:k.hp,t:0,dead:0,sx:-1,sy:-1,behind:false,
+    vel:(opts&&opts.vel)||new THREE.Vector3(0,0,0),spin:(opts&&opts.spin)||0};
+  FS.ents.push(e);return e;
+}
+
+const _pv=new THREE.Vector3();
+function projectEnt(e){
+  _pv.copy(e.obj.position).project(camera);
+  e.sx=(_pv.x+1)/2*W; e.sy=(1-_pv.y)/2*H; e.behind=_pv.z>1;
+}
+function screenRadius(e){
+  // radius in screen px scales with distance; keep clicks fair at depth
+  const d=camera.position.distanceTo(e.obj.position);
+  return Math.max(18,(e.k.r*520)/Math.max(6,d));
+}
+function hitTest(x,y){
+  let best=null,bd=1e9;
+  for(const e of FS.ents){
+    if(e.dead||e.behind)continue;
+    const dx=e.sx-x, dy=e.sy-y, d=Math.hypot(dx,dy);
+    if(d<screenRadius(e)&&d<bd){bd=d;best=e;}
+  }
+  return best;
+}
+function killEnt(e){
+  if(e.dead)return;                  // double-kill guard: score exactly once
+  e.dead=1;
+  if(e.k.power){
+    if(e.k.power==='shield')FS.shield=Math.min(8,FS.shield+2); else {FS.powerAmmo=5;FS.power='bazooka';}
+    SFX.power();
+  } else { FS.score+=e.k.pts; SFX.big(); boom(e.obj.position); }
+  returnToPool(e.k.file,e.obj);
+}
+
 const FS={
   mode:'attract', t:0, tick:0, stage:0, score:0, hi:0, shield:6,
   power:null, powerAmmo:0, ents:[], flashMsg:'', flashT:0, shake:0, over:0,
   start(){this.mode='play';this.t=0;this.tick=0;this.stage=0;this.score=0;this.shield=6;
-    this.power=null;this.powerAmmo=0;this.ents.length=0;this.flashMsg='STAGE 1';this.flashT=2;
+    this.power=null;this.powerAmmo=0;
+    // hand every checked-out clone back before clearing, or a replay starves the pool
+    for(const e of this.ents)if(!e.dead)returnToPool(e.k.file,e.obj);
+    this.ents.length=0;this.flashMsg='STAGE 1';this.flashT=2;
     buildStage(0);   // replay must rebuild the world; stage state and visible world would desync otherwise
     SFX.stage();},
   hurt(n){if(this.mode!=='play')return;this.shake=.4;SFX.bad();
@@ -177,6 +267,12 @@ const FS={
     if(this.mode==='attract'){this.start();return;}
     if(this.mode==='over'){if(this.over>1.2)this.mode='attract';return;}
     SFX.shot();
+    const hit=hitTest(x,y);
+    if(!hit)return;
+    const dmg=(this.power==='bazooka'&&this.powerAmmo>0)?3:1;
+    if(this.power==='bazooka'&&this.powerAmmo>0){this.powerAmmo--;if(this.powerAmmo<=0)this.power=null;}
+    hit.hp-=dmg;
+    if(hit.hp<=0)killEnt(hit); else {SFX.hit();spark(hit.obj.position);}
   },
   update(dt){
     this.t+=dt;this.tick++;
@@ -184,6 +280,43 @@ const FS={
     if(this.shake>0)this.shake=Math.max(0,this.shake-dt*2);
     if(this.mode==='over')this.over+=dt;
     driveCamera();
+    for(const e of this.ents){
+      if(e.dead)continue;
+      e.t+=dt;
+      e.obj.position.addScaledVector(e.vel,dt);
+      if(e.kind==='mech')e.obj.position.y+=Math.sin(e.t*2)*0.02;      // hover bob
+      e.obj.lookAt(camera.position);                                  // face first, then layer motion on top
+      if(e.kind==='pod')e.obj.rotation.z+=Math.sin(e.t*3)*0.25;       // banking
+      if(e.spin)e.obj.rotation.y+=Math.sin(e.t*e.spin)*0.4;
+      projectEnt(e);
+      // missiles that reach the camera hurt and vanish
+      if(e.k.harm&&camera.position.distanceTo(e.obj.position)<6){
+        this.hurt(1);e.dead=1;returnToPool(e.k.file,e.obj);continue;
+      }
+      // anything that passes behind the camera is recycled
+      if(e.obj.position.z>camera.position.z+12){e.dead=1;returnToPool(e.k.file,e.obj);}
+    }
+    if(this.tick%30===0)this.ents=this.ents.filter(e=>!e.dead);
+    if(this.mode==='play'){
+      const ahead=()=>{const u=(this.t*0.035)%1;
+        return railPos(Math.min(0.999,u+0.14),new THREE.Vector3());};
+      if(this.tick%Math.max(30,70-this.stage*10)===0){
+        const p=ahead(), side=Math.random()<.5?-1:1;
+        if(Math.random()<.6)spawn('mech',{at:p.clone().add(new THREE.Vector3(side*rnd(6,18),rnd(-4,6),0))});
+        else spawn('pod',{at:p.clone().add(new THREE.Vector3(side*30,rnd(2,14),0)),
+          vel:new THREE.Vector3(-side*14,0,6),spin:0.6});
+      }
+      if(this.tick%150===100){
+        const p=ahead();
+        const v=camera.position.clone().sub(p).normalize().multiplyScalar(26);
+        spawn('missile',{at:p,vel:v});
+      }
+      if(this.tick%600===400){
+        const p=ahead();
+        spawn(Math.random()<.5?'powerB':'powerS',{at:p.clone().add(new THREE.Vector3(0,8,0)),
+          vel:new THREE.Vector3(0,0,10),spin:1.4});
+      }
+    }
     if(this.mode==='play'&&this.tick>0&&this.tick%1500===0)this.nextStage();
     window.__arcState={game:'gundam',mode:this.mode,score:this.score,stage:this.stage,
       ents:this.ents.filter(e=>!e.dead).length,shield:this.shield,audio:AC?AC.state:'none'};
@@ -223,9 +356,9 @@ window.__arcGame='gundam';
 window.__arcStop=()=>{if(AC&&AC.state==='running')AC.suspend();if(FS.mode==='play')FS.mode='attract';};
 window.__arcStep=(n,dt)=>{n=n||1;dt=dt||.016;for(let i=0;i<n;i++)FS.update(dt);FS.render();};
 window.__arcShoot=(x,y)=>FS.shoot(x,y);
-window.__arcEnts=()=>FS.ents.filter(e=>!e.dead).map(e=>({k:e.kind,x:e.sx,y:e.sy,friendly:false}));
+window.__arcEnts=()=>FS.ents.filter(e=>!e.dead).map(e=>({k:e.kind,x:e.sx,y:e.sy,friendly:!!e.k.friendly}));
 
-if(location.hash==='#selftest'){
+if(location.hash==='#selftest')(async()=>{
   const A=(c,m)=>{if(!c)throw new Error('FAIL: '+m);};
   A(typeof window.__arcStep==='function','__arcStep exists');
   A(typeof window.__arcShoot==='function','__arcShoot exists');
@@ -246,8 +379,24 @@ if(location.hash==='#selftest'){
   A(stageGroup!==null,'stage group replaced not leaked');
   buildStage(0);
   A(Math.abs(stageGroup.children.length-n0)<2,'stage 0 rebuilds deterministically');
+
+  // wait for the enemy clone pool so spawn has something to hand out
+  await new Promise(r=>{const w=()=>(POOL['fs-mech']&&POOL['fs-mech'].length)?r():setTimeout(w,50);w();});
+  FS.start();
+  const before=FS.score;
+  const e=spawn('mech',{at:new THREE.Vector3(0,12,-40)});
+  A(e&&FS.ents.length===1,'spawn adds an entity');
+  window.__arcStep(2,0.016);
+  A(e.sx>=0&&e.sx<=960,'entity projects into screen space');
+  A(hitTest(e.sx,e.sy)===e,'hitTest finds it at its own screen position');
+  A(hitTest(5,5)===null,'hitTest misses far away');
+  killEnt(e);killEnt(e);              // double-kill must not double-score
+  A(FS.score===before+300,'kill scores exactly once');
+  A(window.__arcEnts().length===0,'dead entities leave __arcEnts');
+  FS.ents.length=0;
+  window.__selftest='OK';
   console.log('SELFTEST OK');
-}
+})().catch(err=>{window.__selftest=String(err&&err.message||err);console.error(err);});
 </script>
 </body>
 </html>
