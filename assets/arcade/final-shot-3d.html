@@ -162,9 +162,43 @@ const SFX={
 /* ---------- enemies: pooled Tripo GLB clones, screen-space hit detection ---------- */
 const rnd=(a,b)=>a+Math.random()*(b-a);
 
-// Task 5 replaces these with real particles; stubs keep combat runnable today.
-function boom(_p){}
-function spark(_p){}
+/* ---------- pooled particle fx: one Points cloud, recycled by index, zero allocation in play ---------- */
+const FXN=260;
+const FX_PARK=-99999;               // dead particles are parked off world, never drawn where they died
+const FXP={count:0,i:0,life:new Float32Array(FXN),vel:new Float32Array(FXN*3)};
+const fxPos=new Float32Array(FXN*3);
+for(let i=0;i<FXN;i++)fxPos[i*3+1]=FX_PARK;
+const fxGeo=new THREE.BufferGeometry().setAttribute('position',new THREE.BufferAttribute(fxPos,3));
+const fxPts=new THREE.Points(fxGeo,new THREE.PointsMaterial({
+  color:0xffb020,size:2.6,sizeAttenuation:true,transparent:true,opacity:.95,toneMapped:false}));
+fxPts.frustumCulled=false;          // positions move every frame; a stale bounding sphere would pop the cloud out
+scene.add(fxPts);
+
+function emit(pos,n,spread,speed){
+  for(let j=0;j<n;j++){
+    const i=FXP.i;FXP.i=(FXP.i+1)%FXN;
+    fxPos[i*3]=pos.x;fxPos[i*3+1]=pos.y;fxPos[i*3+2]=pos.z;
+    FXP.vel[i*3]=(Math.random()-.5)*spread*speed;
+    FXP.vel[i*3+1]=(Math.random()-.5)*spread*speed;
+    FXP.vel[i*3+2]=(Math.random()-.5)*spread*speed;
+    FXP.life[i]=0.8;FXP.count++;
+  }
+  fxGeo.attributes.position.needsUpdate=true;
+}
+function boom(pos){emit(pos,40,1,26);FS.shake=Math.max(FS.shake,.35);}
+function spark(pos){emit(pos,10,1,12);}
+function updateFX(dt){
+  let live=0;
+  for(let i=0;i<FXN;i++){
+    if(FXP.life[i]<=0)continue;
+    FXP.life[i]-=dt;live++;
+    if(FXP.life[i]<=0){fxPos[i*3+1]=FX_PARK;continue;}   // retire off world instead of freezing mid air
+    fxPos[i*3]+=FXP.vel[i*3]*dt;
+    fxPos[i*3+1]+=FXP.vel[i*3+1]*dt-9*dt*dt;
+    fxPos[i*3+2]+=FXP.vel[i*3+2]*dt;
+  }
+  if(live)fxGeo.attributes.position.needsUpdate=true;
+}
 
 const KINDS={
   mech   :{hp:2,pts:300,file:'fs-mech',   r:3.2,size:6.0},
@@ -302,6 +336,7 @@ const FS={
       // anything that passes behind the camera is recycled
       if(e.obj.position.z>camera.position.z+12){e.dead=1;returnToPool(e.k.file,e.obj);}
     }
+    updateFX(dt);
     if(this.tick%30===0)this.ents=this.ents.filter(e=>!e.dead);
     if(this.mode==='play'){
       // spawns need lead time ahead of the camera; near the end of a lap there is none,
@@ -329,7 +364,13 @@ const FS={
     window.__arcState={game:'gundam',mode:this.mode,score:this.score,stage:this.stage,
       ents:this.ents.filter(e=>!e.dead).length,shield:this.shield,audio:AC?AC.state:'none'};
   },
-  render(){renderer.render(scene,camera);drawHUD();},
+  render(){
+    if(this.shake>0){
+      camera.position.x+=(Math.random()-.5)*this.shake*1.4;
+      camera.position.y+=(Math.random()-.5)*this.shake*1.4;
+    }
+    renderer.render(scene,camera);drawHUD();
+  },
 };
 
 buildStage(0);
@@ -348,10 +389,46 @@ addEventListener('keydown',e=>{
 });
 addEventListener('keyup',e=>{if(e.key===' ')aim.down=false;});
 
+function txt(s,x,y,size,col,align){
+  ui.font='bold '+size+'px "Courier New",monospace';ui.fillStyle=col;
+  ui.textAlign=align||'center';ui.fillText(s,x,y);
+}
 function drawHUD(){
   ui.clearRect(0,0,W,H);
-  ui.font='bold 16px "Courier New",monospace';ui.fillStyle='#ffd23d';ui.textAlign='left';
-  ui.fillText('SCORE '+String(FS.score).padStart(7,'0'),14,28);
+  // top bar
+  txt('FINAL SHOT',14,30,17,'#ffd23d','left');
+  txt('SCORE '+String(FS.score).padStart(7,'0'),W/2,30,17,'#fff');
+  txt('HI '+String(FS.hi).padStart(7,'0'),W-14,30,17,'#9ce0ff','right');
+  // shield pips
+  for(let i=0;i<8;i++){
+    ui.fillStyle=i<FS.shield?'#39c463':'rgba(255,255,255,.12)';
+    ui.beginPath();ui.roundRect(W-30-i*16,H-24,12,12,3);ui.fill();
+  }
+  if(FS.power==='bazooka')txt('BAZOOKA x'+FS.powerAmmo,14,H-16,15,'#ff7a1a','left');
+  // stage banner
+  if(FS.flashT>0){ui.globalAlpha=Math.min(1,FS.flashT);
+    txt(FS.flashMsg,W/2,H/2-60,42,'#ffd23d');ui.globalAlpha=1;}
+  // crosshair
+  const cx=aim.x,cy=aim.y;
+  ui.strokeStyle='#fff';ui.lineWidth=2;
+  ui.beginPath();ui.arc(cx,cy,13,0,Math.PI*2);ui.stroke();
+  ui.beginPath();ui.moveTo(cx-20,cy);ui.lineTo(cx-6,cy);ui.moveTo(cx+6,cy);ui.lineTo(cx+20,cy);
+  ui.moveTo(cx,cy-20);ui.lineTo(cx,cy-6);ui.moveTo(cx,cy+6);ui.lineTo(cx,cy+20);ui.stroke();
+  // modal screens
+  if(FS.mode==='attract'){
+    ui.fillStyle='rgba(4,5,10,.72)';ui.fillRect(0,0,W,H);
+    txt('FINAL SHOT',W/2,H/2-70,58,'#ffd23d');
+    txt('MOBILE SUIT ARCADE',W/2,H/2-30,20,'#fff');
+    txt('CLICK / TAP TO START',W/2,H/2+40,26,'#fff');
+    txt('shoot: click or SPACE  ·  exit: ESC',W/2,H/2+80,14,'#9ce0ff');
+    txt('an OTTI RECORDS arcade original',W/2,H-30,12,'rgba(255,255,255,.5)');
+  }
+  if(FS.mode==='over'){
+    ui.fillStyle='rgba(4,5,10,.72)';ui.fillRect(0,0,W,H);
+    txt('GAME OVER',W/2,H/2-20,54,'#ff5050');
+    txt('SCORE '+String(FS.score).padStart(7,'0'),W/2,H/2+30,24,'#fff');
+    if(FS.over>1.2)txt('CLICK TO CONTINUE',W/2,H/2+80,18,'#9ce0ff');
+  }
 }
 
 let last=performance.now();
@@ -402,6 +479,14 @@ if(location.hash==='#selftest')(async()=>{
   A(FS.score===before+300,'kill scores exactly once');
   A(window.__arcEnts().length===0,'dead entities leave __arcEnts');
   FS.ents.length=0;
+
+  const fxBefore=FXP.count;
+  boom(new THREE.Vector3(0,10,-30));
+  A(FXP.count>fxBefore,'boom emits particles');
+  spark(new THREE.Vector3(0,10,-30));
+  A(typeof drawHUD==='function','drawHUD defined');
+  FS.mode='over';drawHUD();FS.mode='attract';drawHUD();FS.mode='play';drawHUD();
+
   window.__selftest='OK';
   console.log('SELFTEST OK');
 })().catch(err=>{window.__selftest=String(err&&err.message||err);console.error(err);});
