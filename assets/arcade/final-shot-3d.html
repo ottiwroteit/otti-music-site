@@ -83,25 +83,33 @@ function buildStage(n){
 }
 
 function buildCity(gp,R){
-  scene.background=new THREE.Color(0x2a1408);
-  scene.fog=new THREE.Fog(0x2a1408,60,420);
-  gp.add(new THREE.AmbientLight(0xffc890,0.5));
-  const key=new THREE.DirectionalLight(0xffb060,1.6);key.position.set(-30,60,20);gp.add(key);
-  const rim=new THREE.PointLight(0xff6020,140,220);rim.position.set(10,20,-140);gp.add(rim);
-  // ground
+  // OTTI house rule: vibrant, never flat. This is a neon skyline at dusk, not a brown box.
+  scene.background=new THREE.Color(0x1a0a2e);
+  scene.fog=new THREE.Fog(0x2a0f3a,70,460);
+  gp.add(new THREE.AmbientLight(0xffd0b0,0.9));
+  const key=new THREE.DirectionalLight(0xffc070,2.4);key.position.set(-30,60,20);gp.add(key);
+  // magenta and cyan rims off the studio palette, so the corridor reads as neon rather than mud
+  const rimM=new THREE.PointLight(0xff3d8b,260,260);rimM.position.set(-24,26,-120);gp.add(rimM);
+  const rimC=new THREE.PointLight(0x2be0e0,220,260);rimC.position.set(26,20,-220);gp.add(rimC);
+  const rimO=new THREE.PointLight(0xff7a20,200,240);rimO.position.set(8,14,-40);gp.add(rimO);
+  // ground: wet-street feel, dark but reflective enough to catch the neon
   const ground=new THREE.Mesh(new THREE.PlaneGeometry(400,700),
-    new THREE.MeshStandardMaterial({color:0x14100c,roughness:.95}));
+    new THREE.MeshStandardMaterial({color:0x241436,roughness:.45,metalness:.35}));
   ground.rotation.x=-Math.PI/2;ground.position.set(0,-2,-300);gp.add(ground);
   // towers flanking the rail, lit windows via emissive stripes
-  const bodyM=new THREE.MeshStandardMaterial({color:0x0d0a08,roughness:.9});
-  const winM=new THREE.MeshBasicMaterial({color:0xffb020,toneMapped:false});
-  winM.color.multiplyScalar(0.55);            // bloom-knee dimming (house rule)
+  const bodyM=new THREE.MeshStandardMaterial({color:0x191030,roughness:.75,metalness:.2});
+  // three window tints cycled per tower so the skyline has colour variety
+  const winTints=[0xffb020,0xff3d8b,0x2be0e0].map(c=>{
+    const m=new THREE.MeshBasicMaterial({color:c,toneMapped:false});
+    m.color.multiplyScalar(0.8);              // bright, but held under the blowout knee
+    return m;
+  });
   for(let i=0;i<26;i++){
     const side=i%2?1:-1, h=40+R()*90, w=10+R()*10, d=10+R()*10;
     const x=side*(26+R()*40), z=-20-i*22-R()*10;
     const b=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),bodyM);
     b.position.set(x,h/2-2,z);gp.add(b);
-    const wq=new THREE.Mesh(new THREE.PlaneGeometry(w*0.7,h*0.8),winM);
+    const wq=new THREE.Mesh(new THREE.PlaneGeometry(w*0.7,h*0.8),winTints[i%3]);
     wq.position.set(x-side*(w/2+0.1),h/2,z);wq.rotation.y=side>0?-Math.PI/2:Math.PI/2;gp.add(wq);
   }
   return gp;
