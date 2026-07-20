@@ -343,12 +343,12 @@ const arcchip=document.getElementById('arcchip');
 const screenframe=document.getElementById('screenframe');
 const mpcframe=document.getElementById('mpcframe');
 const arcframe=document.getElementById('arcframe');
-// FINAL SHOT runs the 3D rail-shooter build; the other seven stay on the canvas engine.
+// Games converted to the shared 3D engine get their own page; the rest stay on the canvas
+// engine. Add a key here when a game is converted, and update the selftest below with it.
 // The per-game query is what forces a real iframe reload (hash-only changes are fragment navigations).
+const ARC3D={gundam:'assets/arcade/final-shot-3d.html', vcop2:'assets/arcade/arcade-cop-2-3d.html'};
 function arcSrcFor(game){
-  return game==='gundam'
-    ? 'assets/arcade/final-shot-3d.html?g=gundam#gundam'
-    : 'assets/arcade/index.html?g='+game+'#'+game;
+  return (ARC3D[game]||'assets/arcade/index.html')+'?g='+game+'#'+game;
 }
 const focusStates=['globe','screen','mpc','arc'];
 window.__mpcExit=()=>setCam('wide');    // the MPC app calls this on ESC
@@ -1547,7 +1547,9 @@ if(location.hash==='#selftest'){
   A(arcUnits.every(u=>u.face&&u.obj&&u.game),'arcade unit shape');
   A(new Set(arcUnits.map(u=>u.game)).size===8,'8 distinct games');
   A(arcSrcFor('gundam').startsWith('assets/arcade/final-shot-3d.html'),'gundam routes to the 3D game');
-  A(arcSrcFor('vcop2').startsWith('assets/arcade/index.html'),'other games keep the canvas engine');
+  A(arcSrcFor('vcop2').startsWith('assets/arcade/arcade-cop-2-3d.html'),'vcop2 routes to the 3D game');
+  A(arcSrcFor('hotd').startsWith('assets/arcade/index.html'),'unconverted games keep the canvas engine');
+  A(arcSrcFor('vcop2').includes('?g=vcop2'),'the per-game query survives, or the iframe never reloads');
   A(!!CAMS.arcade,'arcade cam state');
   setCam('arcade');A(camState==='arcade','enter arcade');
   setCam('wide');A(camState==='wide','exit arcade');
