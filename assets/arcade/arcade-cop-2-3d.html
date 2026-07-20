@@ -318,9 +318,12 @@ function place(E,u,walking,t){
 }
 function driveCover(E,dt){
   if(FS.mode!=='play'){
-    // attract and game over: a slow dolly so the street is never a frozen postcard
+    // attract and game over: a slow dolly so the street is never a frozen postcard.
+    // Ping-pong rather than modulo: a wrapping u hard-cut the view back to the street
+    // corner every 28 seconds, which read as a glitch on the attract screen.
     G.legT+=dt;
-    place(E,Math.min(0.96,(G.legT*0.035)%1),true,FS.t);
+    const w=(G.legT*0.035)%2;
+    place(E,Math.min(0.96,w>1?2-w:w),true,FS.t);
     return;
   }
   G.legT+=dt;
