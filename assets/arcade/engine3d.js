@@ -56,29 +56,84 @@ export const SFX={
 /* ---------- the engine ----------
  * createEngine(cfg) -> E
  *
- * cfg fields (all optional unless marked):
+ * THE COMPLETE CONFIG SURFACE. Anything not listed here is not a config option.
+ * A game can be written from this block alone; every hook is called with the engine
+ * object E so the game never needs module-level state of its own.
+ *
+ * --- identity and chrome ---
  *   gameId        REQUIRED string, the value of window.__arcGame and __arcState.game
  *   title         REQUIRED string, drawn in the top bar and on the attract screen
- *   subtitle      string under the attract title
- *   tint          accent colour for title / banner / attract title (default '#ffd23d')
+ *   subtitle      optional string under the attract title
+ *   tint          optional accent colour for title / banner / attract title (default '#ffd23d')
+ *
+ * --- world ---
  *   rails         REQUIRED array of THREE.CatmullRomCurve3, one per stage, cycled by index
  *   stages        REQUIRED array of (group, rand, E) => void stage builders, cycled by index
- *   kinds         REQUIRED entity table: {key:{hp,pts,file,r,size,harm?,power?}}
- *   spawnTick     (E, dt) => void, called every play frame; the game's spawn cadences
- *   entityUpdate  (e, dt, E) => void, per-kind motion, called after velocity integration
- *   damage        (hit, E) => number, damage for one shot (default 1)
- *   onKill        (e, E) => truthy if the game handled this kill (power-ups); else engine scores it
- *   onStart       (E) => void, reset game-specific state on a new run
- *   hud           (E) => void, the game's full HUD draw, built from the E.draw* primitives
- *   maxStages     stage index that ends the run (default 2)
- *   shieldStart   starting shield (default 6)
- *   railSpeed     rail laps per second (default 0.035, one lap is one stage)
- *   propPath      GLB folder (default '../props/')
- *   poolPer       clones per file (default 6)
- *   width/height  canvas size (default 960x540)
+ *   kinds         REQUIRED entity table, see the kind shape below
+ *   hud           REQUIRED (E) => void, the game's full HUD draw, built from the E.draw* primitives.
+ *                 The engine never draws a HUD of its own; omit this and nothing is drawn.
+ *
+ * --- per-frame hooks ---
+ *   tick          optional (E, dt) => void, called EVERY frame in EVERY mode (attract, play, over).
+ *                 Use for timers that must keep running outside play, e.g. a reload countdown.
+ *   spawnTick     optional (E, dt) => void, called only on play frames; the game's spawn cadences
+ *   entityUpdate  optional (e, dt, E) => void, per-kind motion, called after velocity integration
+ *
+ * --- combat hooks ---
+ *   onShoot       optional (E, x, y) => boolean|undefined, called at the top of a play-mode shot,
+ *                 BEFORE the shot sound and BEFORE the hit test. Return exactly false to cancel the
+ *                 shot entirely: no sound, no hit test, no damage. This is the magazine hook, it is
+ *                 where a game plays a dry click, decrements ammo, or kicks off an auto reload.
+ *                 Any other return value (including undefined) lets the shot through.
+ *   damage        optional (hit, E) => number, damage for one shot (default 1)
+ *   onKill        optional (e, E) => truthy if the game handled this kill (power-ups, friendly fire);
+ *                 else the engine banks e.k.pts, plays the big sound and blows the entity up
+ *
+ * --- run lifecycle hooks ---
+ *   onStart       optional (E) => void, reset game-specific state on a new run
+ *   onNextStage   optional (E) => void, called on every stage change AFTER the old stage's entities
+ *                 are recycled and the rail clock is reset, BEFORE the new world is built.
+ *                 LOAD BEARING: this is the only place to reset spawn cadence timers. A game that
+ *                 skips it carries its timers across the cut and burst-spawns at the start of stage 2.
+ *
+ * --- tuning numbers ---
+ *   maxStages     optional stage index that ends the run (default 2)
+ *   shieldStart   optional starting shield (default 6). A lives-based game can simply treat this
+ *                 as its life count, or ignore it and keep its own counter on E.state.game.
+ *   railSpeed     optional rail laps per second (default 0.035, one lap is one stage)
+ *   maxLive       optional hard cap on live entities (default 12). This is an allocation budget:
+ *                 the clone pool is sized poolPer per file, so raising it needs poolPer raised too.
+ *   propPath      optional GLB folder (default '../props/')
+ *   poolPer       optional clones per file (default 6)
+ *
+ * --- DOM ids (the host HTML owns the markup) ---
+ *   glCanvasId    optional id of the WebGL canvas (default 'gl')
+ *   uiCanvasId    optional id of the 2D HUD canvas (default 'ui')
+ *   wrapId        optional id of the scaling wrapper (default 'wrap')
+ *
+ * There is no width/height option. The frame is fixed at 960x540 because the host HTML
+ * hardcodes it three times (canvas width/height attributes, #wrap CSS, #gl/#ui CSS); a
+ * config number that only reached the renderer was a trap. Read E.W / E.H instead of
+ * redeclaring the constants in the game.
+ *
+ * kind shape: {hp, pts, file, r, size, harm?, power?, friendly?}
+ *   hp    shots to kill (before cfg.damage scaling)
+ *   pts   score banked by the engine on kill, unless cfg.onKill claims it
+ *   file  GLB basename under propPath
+ *   r     hit radius in world units, scaled to screen px by E.screenRadius
+ *   size  largest world dimension the clone is scaled to
+ *   harm  true for the FINAL SHOT default (1 damage when it closes within 6 world units of the
+ *         camera), or {dmg, radius} to tune either. The entity is consumed on contact.
+ *   power free-form marker the game reads in onKill; the engine only checks truthiness of harm
+ *   friendly free-form marker; surfaced in window.__arcEnts for tests
+ *
+ * game state: E.state is the engine state object (mode, t, stage, score, shield, ents ...).
+ * Do NOT hang game fields off it directly. E.state.game is an empty object reserved for the
+ * game; put every game-specific field there so a future engine field can never collide.
  */
 export function createEngine(cfg){
-  const W=cfg.width||960, H=cfg.height||540;
+  // fixed frame: the host HTML hardcodes 960x540 in the canvas attributes and the CSS
+  const W=960, H=540;
   const TINT=cfg.tint||'#ffd23d';
   const RAIL_SPEED=cfg.railSpeed!==undefined?cfg.railSpeed:0.035;
   const MAX_STAGES=cfg.maxStages!==undefined?cfg.maxStages:2;
@@ -173,7 +228,8 @@ export function createEngine(cfg){
   const KINDS=cfg.kinds;
   const POOL={};                      // file -> array of ready clones
   const BASE={};                      // file -> largest dimension at scale 1
-  const MAX_LIVE=12;                  // hard budget: never allocate a clone during play
+  // hard budget: never allocate a clone during play
+  const MAX_LIVE=cfg.maxLive!==undefined?cfg.maxLive:12;
 
   const FILES=[];
   for(const key in KINDS){const f=KINDS[key].file;if(FILES.indexOf(f)<0)FILES.push(f);}
@@ -224,10 +280,13 @@ export function createEngine(cfg){
     _pv.copy(e.obj.position).project(camera);
     e.sx=(_pv.x+1)/2*W; e.sy=(1-_pv.y)/2*H; e.behind=_pv.z>1;
   }
+  // px per world unit at one unit of depth, hand tuned on the 540px frame at fov 62 (520 there).
+  // Written as a fraction of H so the aim stays honest if the frame is ever resized.
+  const RADIUS_K=H*(520/540);
   function screenRadius(e){
     // radius in screen px scales with distance; keep clicks fair at depth
     const d=camera.position.distanceTo(e.obj.position);
-    return Math.max(18,(e.k.r*520)/Math.max(6,d));
+    return Math.max(18,(e.k.r*RADIUS_K)/Math.max(6,d));
   }
   function hitTest(x,y){
     let best=null,bd=1e9;
@@ -250,6 +309,7 @@ export function createEngine(cfg){
   const FS={
     mode:'attract', t:0, tick:0, stage:0, score:0, hi:0, shield:SHIELD_START,
     paused:false,
+    game:{},   // reserved for the game: lives, magazine, cadence timers, anything engine-agnostic
     ents:[], flashMsg:'', flashT:0, shake:0, over:0,
     start(){FS.mode='play';FS.t=0;FS.tick=0;FS.stage=0;FS.score=0;FS.shield=SHIELD_START;
       if(cfg.onStart)cfg.onStart(E);
@@ -274,6 +334,9 @@ export function createEngine(cfg){
     shoot(x,y){
       if(FS.mode==='attract'){FS.start();return;}
       if(FS.mode==='over'){if(FS.over>1.2)FS.mode='attract';return;}
+      // the game gets first refusal on the trigger: an empty magazine returns false and the
+      // whole shot is cancelled, sound included, so the game can play its own dry click
+      if(cfg.onShoot&&cfg.onShoot(E,x,y)===false)return;
       SFX.shot();
       const hit=hitTest(x,y);
       if(!hit)return;
@@ -293,15 +356,22 @@ export function createEngine(cfg){
         e.obj.position.addScaledVector(e.vel,dt);
         if(cfg.entityUpdate)cfg.entityUpdate(e,dt,E);   // per-kind motion belongs to the game
         projectEnt(e);
-        // missiles that reach the camera hurt and vanish
-        if(e.k.harm&&camera.position.distanceTo(e.obj.position)<6){
-          FS.hurt(1);e.dead=1;returnToPool(e.k.file,e.obj);continue;
+        // harmful kinds that reach the camera hurt and vanish.
+        // harm:true is the FINAL SHOT default of 1 damage at radius 6; harm:{dmg,radius} tunes it
+        if(e.k.harm){
+          const hm=e.k.harm, hr=(hm===true||hm.radius===undefined)?6:hm.radius;
+          if(camera.position.distanceTo(e.obj.position)<hr){
+            FS.hurt((hm===true||hm.dmg===undefined)?1:hm.dmg);
+            e.dead=1;returnToPool(e.k.file,e.obj);continue;
+          }
         }
         // anything that passes behind the camera is recycled
         if(e.obj.position.z>camera.position.z+12){e.dead=1;returnToPool(e.k.file,e.obj);}
       }
       updateFX(dt);
       if(FS.tick%30===0)FS.ents=FS.ents.filter(e=>!e.dead);
+      // every frame, every mode: reload timers and the like must not stall on the attract screen
+      if(cfg.tick)cfg.tick(E,dt);
       if(FS.mode==='play'){
         if(cfg.spawnTick)cfg.spawnTick(E,dt);
         // one stage is one full lap of its rail, so the stage never outlives the spline
@@ -339,6 +409,9 @@ export function createEngine(cfg){
     if(e.key==='Escape'){try{parent.__arcExit&&parent.__arcExit();}catch(_){}return;}
     if(e.repeat)return;ac();
     if(e.key===' '){FS.shoot(aim.x,aim.y);aim.down=true;}
+    // the game's own keys (reload, weapon swap) ride this listener instead of registering a
+    // competing one: same Escape gate, same repeat gate, same audio unlock, one source of truth
+    if(cfg.onKey)cfg.onKey(e,E);
   });
   addEventListener('keyup',e=>{if(e.key===' ')aim.down=false;});
 
@@ -380,15 +453,19 @@ export function createEngine(cfg){
     txt('SCORE '+String(FS.score).padStart(7,'0'),W/2,H/2+30,24,'#fff');
     if(FS.over>1.2)txt('CLICK TO CONTINUE',W/2,H/2+80,18,'#9ce0ff');
   }
-  function drawHUD(){cfg.hud(E);}
+  function drawHUD(){if(cfg.hud)cfg.hud(E);}   // cfg.hud is REQUIRED; guarded so a missing one is a blank HUD, not a throw every frame
 
-  function loop(){requestAnimationFrame(loop);
+  let rafId=0;   // declared above frame() so the guard below cannot hit a TDZ
+  function frame(){rafId=requestAnimationFrame(frame);
     const now=performance.now(), dt=Math.min((now-last)/1000,0.033);last=now;
     // The parent hides this iframe with opacity, not display, so rAF keeps firing after
     // the player leaves the cabinet. Without this gate a second WebGL context renders a
     // full scene for the rest of the session on top of the site's own 3D scene.
     if(FS.paused)return;   // browsers already stop rAF for hidden tabs, so paused is the only gate needed
     FS.update(dt);FS.render();}
+  // idempotent: a second loop() would run update and render twice per frame, doubling
+  // the effective game speed and burning a whole extra render pass
+  function loop(){if(rafId)return;rafId=requestAnimationFrame(frame);}
 
   function installTestHooks(){
     window.__arcGame=cfg.gameId;
@@ -400,7 +477,9 @@ export function createEngine(cfg){
     window.__arcEnts=()=>FS.ents.filter(e=>!e.dead).map(e=>({k:e.kind,x:e.sx,y:e.sy,friendly:!!e.k.friendly}));
   }
 
-  function start(){buildStage(0);installTestHooks();loop();}
+  // idempotent: a second start() would rebuild stage 0 mid run and throw away the live world
+  let booted=false;
+  function start(){if(booted)return;booted=true;buildStage(0);loop();}
 
   const E={
     // three.js handles
@@ -420,8 +499,18 @@ export function createEngine(cfg){
     ac,blip,SFX,audioState,
     // hud
     txt,clearHUD,drawTopBar,drawBanner,drawCrosshair,drawAttract,drawGameOver,drawHUD,
-    // boot: builds stage 0, installs the six window.__arc* hooks, starts the rAF loop
+    // input: toGame maps a client-space pointer event to 960x540 game space, the one
+    // conversion every extra pointer handler needs and must never re-derive by hand
+    toGame,
+    // boot: start builds stage 0 and starts the rAF loop; both start and loop are idempotent
     start,fit,loop,installTestHooks,
   };
+
+  // The six window.__arc* hooks are installed here, at construction, NOT in start().
+  // A game that defers start() behind an await (waiting on the clone pool, say) would
+  // otherwise leave window.__arcStop undefined for that window, and the parent's pause
+  // gate would silently no-op: a second WebGL context then renders over the site's own
+  // 3D scene for the rest of the session.
+  installTestHooks();
   return E;
 }
