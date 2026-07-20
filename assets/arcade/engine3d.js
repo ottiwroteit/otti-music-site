@@ -16,6 +16,9 @@
 import * as THREE from 'three';
 import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
 import {MeshoptDecoder} from 'three/addons/libs/meshopt_decoder.module.js';
+// Object3D.clone() copies a SkinnedMesh but not its skeleton binding: every clone then
+// deforms with the FIRST clone's bones. SkeletonUtils.clone rebinds each copy.
+import {clone as skeletonClone} from 'three/addons/utils/SkeletonUtils.js';
 
 export const rnd=(a,b)=>a+Math.random()*(b-a);
 
@@ -116,16 +119,33 @@ export const SFX={
  * config number that only reached the renderer was a trap. Read E.W / E.H instead of
  * redeclaring the constants in the game.
  *
- * kind shape: {hp, pts, file, r, size, harm?, power?, friendly?}
+ * kind shape: {hp, pts, file, r, size, harm?, power?, friendly?, clip?, dieClip?, dieHold?}
  *   hp    shots to kill (before cfg.damage scaling)
  *   pts   score banked by the engine on kill, unless cfg.onKill claims it
  *   file  GLB basename under propPath
  *   r     hit radius in world units, scaled to screen px by E.screenRadius
- *   size  largest world dimension the clone is scaled to
+ *   size  largest world dimension the clone is scaled to, measured on the BIND pose
  *   harm  true for the FINAL SHOT default (1 damage when it closes within 6 world units of the
  *         camera), or {dmg, radius} to tune either. The entity is consumed on contact.
  *   power free-form marker the game reads in onKill; the engine only checks truthiness of harm
  *   friendly free-form marker; surfaced in window.__arcEnts for tests
+ *   clip  name of the clip played on spawn. REQUIRED for a rigged kind: stopping a mixer
+ *         leaves the bones where the last clip left them, so a clone recycled from a corpse
+ *         and respawned without a clip stands there dead on the ground.
+ *   dieClip  name of the death clip, default 'die'
+ *   dieHold  seconds to keep the clone alive after the kill so the death clip can play.
+ *         Without it the clone returns to the pool on the same frame and the death is invisible.
+ *         A corpse still holds its pool slot, and dead entities do not count against MAX_LIVE,
+ *         so poolPer must cover the peak of live enemies PLUS corpses within dieHold seconds.
+ *         Undersize it and spawns silently return null while the bodies are on the floor.
+ *
+ * rigged characters (a GLB carrying skins + animations, e.g. a Tripo rig):
+ *   The pool clones with SkeletonUtils so each copy has its own skeleton, gives each clone
+ *   its own AnimationMixer, and updates the mixer of every live entity.
+ *   E.playClip(entOrObj, name, {fade, once, speed}) crossfades to a clip by name.
+ *   E.clipName(entOrObj) reports the current clip, and window.__arcEnts exposes it as .clip.
+ *   E.faceCameraYaw(entOrObj, yawOffset) turns a ground figure toward the camera on Y only.
+ *   None of this costs an unrigged game anything: a file with no animations gets no mixer.
  *
  * game state: E.state is the engine state object (mode, t, stage, score, shield, ents ...).
  * Do NOT hang game fields off it directly. E.state.game is an empty object reserved for the
@@ -237,16 +257,35 @@ export function createEngine(cfg){
     POOL[file]=[];
     gltfL.load(`${PROP_PATH}${file}.glb`,g=>{
       const src=g.scene;
-      src.traverse(c=>{if(c.isMesh&&c.material){
-        (Array.isArray(c.material)?c.material:[c.material]).forEach(m=>{
-          m.emissiveIntensity=0;      // house rule: generated GLBs ship hot emissives
-          m.envMapIntensity=.6;
-        });
-      }});
-      // measure once at scale 1; re-measuring a scaled clone would reset it to scale 1
+      let skinned=false;
+      src.traverse(c=>{
+        if(c.isSkinnedMesh)skinned=true;
+        if(c.isMesh&&c.material){
+          (Array.isArray(c.material)?c.material:[c.material]).forEach(m=>{
+            m.emissiveIntensity=0;      // house rule: generated GLBs ship hot emissives
+            m.envMapIntensity=.6;
+          });
+        }
+      });
+      // measure once at scale 1; re-measuring a scaled clone would reset it to scale 1.
+      // For a rigged file this is the BIND pose size, which is what we want: a clone must
+      // not resize itself when it switches from a crouch clip to a standing one.
       const dim=new THREE.Box3().setFromObject(src).getSize(new THREE.Vector3());
       BASE[file]=Math.max(1e-4,dim.x,dim.y,dim.z);
-      for(let i=0;i<POOL_PER;i++){const c=src.clone(true);c.visible=false;scene.add(c);POOL[file].push(c);}
+      const clips=g.animations||[];
+      for(let i=0;i<POOL_PER;i++){
+        const c=skinned?skeletonClone(src):src.clone(true);
+        c.visible=false;
+        if(clips.length){
+          // one mixer per clone: enemies play different clips at different times
+          c.userData.mixer=new THREE.AnimationMixer(c);
+          c.userData.clips=clips;
+          // a skinned mesh keeps its BIND-pose bounding sphere, so a clip that reaches
+          // outside it (an arm thrown out on death) pops the whole body off screen
+          c.traverse(o=>{if(o.isSkinnedMesh)o.frustumCulled=false;});
+        }
+        scene.add(c);POOL[file].push(c);
+      }
     },undefined,()=>console.warn('enemy GLB failed: '+file));  // silent skip, game still playable
   });
 
@@ -258,7 +297,48 @@ export function createEngine(cfg){
     o.rotation.set(0,0,0);
     o.visible=true;return o;
   }
-  function returnToPool(file,o){o.visible=false;POOL[file]&&POOL[file].push(o);}
+  function returnToPool(file,o){
+    // a recycled clone must not carry the corpse pose into its next spawn
+    if(o.userData.mixer){o.userData.mixer.stopAllAction();o.userData.act=null;}
+    o.visible=false;POOL[file]&&POOL[file].push(o);
+  }
+
+  /* ---------- rigged clips: one mixer per clone, crossfaded by name ----------
+   * playClip(entOrObject, name, {fade, once, speed}) -> the AnimationAction, or null if
+   * this file has no such clip. Games call it on spawn and on every state change.
+   */
+  function playClip(target,name,opts){
+    const o=target.obj||target, mx=o.userData.mixer, list=o.userData.clips;
+    if(!mx||!list)return null;
+    const clip=list.find(c=>c.name===name);
+    if(!clip)return null;
+    const o2=opts||{}, fade=o2.fade!==undefined?o2.fade:0.18;
+    const prev=o.userData.act, act=mx.clipAction(clip);
+    if(prev===act&&act.isRunning())return act;   // re-asserting the current state must not restart it
+    if(o2.once){act.setLoop(THREE.LoopOnce,1);act.clampWhenFinished=true;}
+    else{act.setLoop(THREE.LoopRepeat,Infinity);act.clampWhenFinished=false;}
+    act.timeScale=o2.speed||1;
+    act.reset().play();
+    if(prev&&prev!==act){
+      if(fade>0)act.crossFadeFrom(prev,fade,true); else prev.stop();
+    }
+    o.userData.act=act;
+    return act;
+  }
+  function clipName(target){
+    const o=target.obj||target;
+    return o.userData.act?o.userData.act.getClip().name:null;
+  }
+
+  // Yaw-only facing. obj.lookAt() pitches a standing figure off its feet whenever the
+  // camera rides above or below it, so ground enemies use this instead. yawOffset is
+  // per-file: Tripo aligns each mesh to its source photo, so forward is rarely +Z.
+  const _fy=new THREE.Vector3();
+  function faceCameraYaw(target,yawOffset){
+    const o=target.obj||target;
+    _fy.copy(camera.position).sub(o.position);
+    o.rotation.set(0,Math.atan2(_fy.x,_fy.z)+(yawOffset||0),0);
+  }
 
   function spawn(kindKey,opts){
     if(FS.ents.filter(e=>!e.dead).length>=MAX_LIVE)return null;
@@ -268,8 +348,10 @@ export function createEngine(cfg){
     if(!obj)return null;
     const at=(opts&&opts.at)||new THREE.Vector3(0,10,-60);
     obj.position.copy(at);
-    const e={kind:kindKey,k,obj,hp:k.hp,t:0,dead:0,sx:-1,sy:-1,behind:false,baseY:at.y,
+    const e={kind:kindKey,k,obj,hp:k.hp,t:0,dead:0,dying:0,recycled:0,sx:-1,sy:-1,behind:false,baseY:at.y,
       vel:(opts&&opts.vel)||new THREE.Vector3(0,0,0),spin:(opts&&opts.spin)||0};
+    // a rigged kind starts on its idle clip with no crossfade: there is no previous pose
+    if(k.clip)playClip(e,k.clip,{fade:0});
     FS.ents.push(e);
     projectEnt(e);   // project immediately: an unprojected sx/sy of -1 is clickable near the top-left corner
     return e;
@@ -297,12 +379,23 @@ export function createEngine(cfg){
     }
     return best;
   }
+  // Every release of a clone goes through here. Returning one clone twice would put it in
+  // the pool twice and hand the same object to two live entities.
+  function recycle(e){
+    if(e.recycled)return;
+    e.recycled=1;e.dying=0;
+    returnToPool(e.k.file,e.obj);
+  }
   function killEnt(e){
     if(e.dead)return;                  // double-kill guard: score exactly once
     e.dead=1;
     // the game gets first refusal so power-ups can score themselves instead of banking points
     if(!(cfg.onKill&&cfg.onKill(e,E))){ FS.score+=e.k.pts; SFX.big(); boom(e.obj.position); }
-    returnToPool(e.k.file,e.obj);
+    // a rigged kind keeps its clone for dieHold seconds so the death clip can play out;
+    // it is already dead, so it cannot be shot, scored or collided with in the meantime
+    if(e.k.dieHold>0&&e.obj.userData.mixer&&playClip(e,e.k.dieClip||'die',{once:true,fade:.08}))
+      e.dying=e.k.dieHold;
+    else recycle(e);
   }
 
   const STAGE_SECONDS=1/RAIL_SPEED;   // exactly one lap of the rail (driveCamera uses t*RAIL_SPEED)
@@ -314,7 +407,7 @@ export function createEngine(cfg){
     start(){FS.mode='play';FS.t=0;FS.tick=0;FS.stage=0;FS.score=0;FS.shield=SHIELD_START;
       if(cfg.onStart)cfg.onStart(E);
       // hand every checked-out clone back before clearing, or a replay starves the pool
-      for(const e of FS.ents)if(!e.dead)returnToPool(e.k.file,e.obj);
+      for(const e of FS.ents)recycle(e);
       FS.ents.length=0;FS.flashMsg='STAGE 1';FS.flashT=2;
       buildStage(0);   // replay must rebuild the world; stage state and visible world would desync otherwise
       SFX.stage();},
@@ -324,7 +417,7 @@ export function createEngine(cfg){
     nextStage(){FS.stage++;
       // recycle the old stage's enemies: the rail changes under them, so they would
       // hang in the new world holding pool slots until the camera happened to pass each one
-      for(const e of FS.ents)if(!e.dead)returnToPool(e.k.file,e.obj);
+      for(const e of FS.ents)recycle(e);
       FS.ents.length=0;
       FS.t=0;   // new stage, new lap: restart the rail at its start
       if(cfg.onNextStage)cfg.onNextStage(E);
@@ -351,8 +444,17 @@ export function createEngine(cfg){
       if(FS.mode==='over')FS.over+=dt;
       driveCamera();
       for(const e of FS.ents){
-        if(e.dead)continue;
+        if(e.dead){
+          // a corpse mid death clip: keep its mixer running, then hand the clone back
+          if(e.dying>0){
+            e.dying-=dt;
+            if(e.obj.userData.mixer)e.obj.userData.mixer.update(dt);
+            if(e.dying<=0)recycle(e);
+          }
+          continue;
+        }
         e.t+=dt;
+        if(e.obj.userData.mixer)e.obj.userData.mixer.update(dt);   // rigged kinds only
         e.obj.position.addScaledVector(e.vel,dt);
         if(cfg.entityUpdate)cfg.entityUpdate(e,dt,E);   // per-kind motion belongs to the game
         projectEnt(e);
@@ -362,14 +464,16 @@ export function createEngine(cfg){
           const hm=e.k.harm, hr=(hm===true||hm.radius===undefined)?6:hm.radius;
           if(camera.position.distanceTo(e.obj.position)<hr){
             FS.hurt((hm===true||hm.dmg===undefined)?1:hm.dmg);
-            e.dead=1;returnToPool(e.k.file,e.obj);continue;
+            e.dead=1;recycle(e);continue;
           }
         }
         // anything that passes behind the camera is recycled
-        if(e.obj.position.z>camera.position.z+12){e.dead=1;returnToPool(e.k.file,e.obj);}
+        if(e.obj.position.z>camera.position.z+12){e.dead=1;recycle(e);}
       }
       updateFX(dt);
-      if(FS.tick%30===0)FS.ents=FS.ents.filter(e=>!e.dead);
+      // corpses still playing a death clip must survive compaction, or their clone never
+      // comes back to the pool and the pool bleeds one slot per kill
+      if(FS.tick%30===0)FS.ents=FS.ents.filter(e=>!e.dead||e.dying>0);
       // every frame, every mode: reload timers and the like must not stall on the attract screen
       if(cfg.tick)cfg.tick(E,dt);
       if(FS.mode==='play'){
@@ -474,7 +578,8 @@ export function createEngine(cfg){
       FS.paused=true;};
     window.__arcStep=(n,dt)=>{n=n||1;dt=dt||.016;for(let i=0;i<n;i++)FS.update(dt);FS.render();};
     window.__arcShoot=(x,y)=>FS.shoot(x,y);
-    window.__arcEnts=()=>FS.ents.filter(e=>!e.dead).map(e=>({k:e.kind,x:e.sx,y:e.sy,friendly:!!e.k.friendly}));
+    window.__arcEnts=()=>FS.ents.filter(e=>!e.dead).map(e=>({k:e.kind,x:e.sx,y:e.sy,friendly:!!e.k.friendly,
+      clip:clipName(e)}));
   }
 
   // idempotent: a second start() would rebuild stage 0 mid run and throw away the live world
@@ -492,7 +597,9 @@ export function createEngine(cfg){
     buildStage,getStageGroup:()=>stageGroup,
     // entities
     KINDS,MAX_LIVE,pool:POOL,base:BASE,spawn,projectEnt,screenRadius,hitTest,killEnt,
-    takeFromPool,returnToPool,
+    takeFromPool,returnToPool,recycle,
+    // rigged characters
+    playClip,clipName,faceCameraYaw,
     // fx
     emit,boom,spark,updateFX,fxCount:()=>FXP.count,
     // audio
