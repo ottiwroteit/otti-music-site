@@ -129,10 +129,15 @@ export const SFX={
  *         camera), or {dmg, radius} to tune either. The entity is consumed on contact.
  *   power free-form marker the game reads in onKill; the engine only checks truthiness of harm
  *   friendly free-form marker; surfaced in window.__arcEnts for tests
- *   clip  name of the clip played on spawn (rigged files only)
+ *   clip  name of the clip played on spawn. REQUIRED for a rigged kind: stopping a mixer
+ *         leaves the bones where the last clip left them, so a clone recycled from a corpse
+ *         and respawned without a clip stands there dead on the ground.
  *   dieClip  name of the death clip, default 'die'
  *   dieHold  seconds to keep the clone alive after the kill so the death clip can play.
  *         Without it the clone returns to the pool on the same frame and the death is invisible.
+ *         A corpse still holds its pool slot, and dead entities do not count against MAX_LIVE,
+ *         so poolPer must cover the peak of live enemies PLUS corpses within dieHold seconds.
+ *         Undersize it and spawns silently return null while the bodies are on the floor.
  *
  * rigged characters (a GLB carrying skins + animations, e.g. a Tripo rig):
  *   The pool clones with SkeletonUtils so each copy has its own skeleton, gives each clone
