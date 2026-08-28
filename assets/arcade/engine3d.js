@@ -77,6 +77,11 @@ export const SFX={
  *                 The engine never draws a HUD of its own; omit this and nothing is drawn.
  *
  * --- per-frame hooks ---
+ *   camera        optional (E, dt) => void, REPLACES the engine's rail ride for this frame.
+ *                 Called before entities project, so the hit test and the HUD agree with what
+ *                 the player sees. A stop-and-go cover game drives its own camera here and
+ *                 uses the rail as a path rather than a ride. Do NOT do this from cfg.tick:
+ *                 tick runs after projection, so the aim would trail the view by one frame.
  *   tick          optional (E, dt) => void, called EVERY frame in EVERY mode (attract, play, over).
  *                 Use for timers that must keep running outside play, e.g. a reload countdown.
  *   spawnTick     optional (E, dt) => void, called only on play frames; the game's spawn cadences
@@ -125,6 +130,8 @@ export const SFX={
  *   file  GLB basename under propPath
  *   r     hit radius in world units, scaled to screen px by E.screenRadius
  *   size  largest world dimension the clone is scaled to, measured on the BIND pose
+ *   aimY  world units above the entity origin to project from, default 0. A GLB whose origin
+ *         is at the feet needs this, or the hit circle sits on the shoes and body shots miss.
  *   harm  true for the FINAL SHOT default (1 damage when it closes within 6 world units of the
  *         camera), or {dmg, radius} to tune either. The entity is consumed on contact.
  *   power free-form marker the game reads in onKill; the engine only checks truthiness of harm
@@ -359,7 +366,12 @@ export function createEngine(cfg){
 
   const _pv=new THREE.Vector3();
   function projectEnt(e){
-    _pv.copy(e.obj.position).project(camera);
+    // A standing figure's origin is at its FEET, so projecting the origin puts the hit
+    // circle and every HUD marker on the shoes while the player aims at the chest.
+    // kind.aimY lifts the projected point into the body.
+    _pv.copy(e.obj.position);
+    if(e.k.aimY)_pv.y+=e.k.aimY;
+    _pv.project(camera);
     e.sx=(_pv.x+1)/2*W; e.sy=(1-_pv.y)/2*H; e.behind=_pv.z>1;
   }
   // px per world unit at one unit of depth, hand tuned on the 540px frame at fov 62 (520 there).
@@ -442,7 +454,10 @@ export function createEngine(cfg){
       if(FS.flashT>0)FS.flashT-=dt;
       if(FS.shake>0)FS.shake=Math.max(0,FS.shake-dt*2);
       if(FS.mode==='over')FS.over+=dt;
-      driveCamera();
+      // The camera must be final BEFORE entities project: screen positions drive both the
+      // crosshair hit test and the HUD, so a game that moved the camera in cfg.tick (which
+      // runs later) would aim at a camera the player never looked through.
+      if(cfg.camera)cfg.camera(E,dt); else driveCamera();
       for(const e of FS.ents){
         if(e.dead){
           // a corpse mid death clip: keep its mixer running, then hand the clone back

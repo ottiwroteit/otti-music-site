@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>MSL ARCADE: ARCADE COP 2</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{width:100%;height:100%;overflow:hidden;background:#050508;font-family:'Courier New',monospace;
+    user-select:none;-webkit-user-select:none;cursor:none}
+  #wrap{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:960px;height:540px}
+  #gl,#ui{position:absolute;left:0;top:0;width:960px;height:540px;cursor:none}
+  #ui{pointer-events:none}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="gl" width="960" height="540"></canvas><canvas id="ui" width="960" height="540"></canvas></div>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js",
+"three/addons/":"https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"}}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import {createEngine,rnd,blip,SFX} from './engine3d.js';
+
+/* ARCADE COP 2 - the second 3D cabinet, first one with rigged characters.
+ *
+ * Balance is copied from GAMES.vcop2 in assets/arcade/index.html and must stay there:
+ * the conversion changes presentation, not difficulty. Frame-counted cadences from the
+ * canvas engine are converted to SECONDS here (canvas ran at 60 ticks per second).
+ *
+ * The camera is NOT the engine's rail ride. This is a stop-and-go cover shooter: the cop
+ * walks to a cover point, holds while enemies pop up, then moves on. That lives in cfg.camera,
+ * which the engine calls in place of its own rail ride and before entities project, so the
+ * crosshair and the hit test agree with the view. The rail is the walking path, not a ride.
+ */
+
+const MAG=6, RELOAD_T=0.8, LIVES=3;
+const STAGE_T=1400/60;          // canvas advanced the stage at tick 1400 of a 60Hz loop
+const HOLD_T=4.0, WALK_T=1.5;   // one leg: hold at cover, then walk to the next
+const YAW=-Math.PI/2;           // measured: the Tripo characters face +X, not +Z
+const GROUND=0, EYE=1.62, CROUCH=1.18;
+
+// ---- rails: the walking path per stage, roughly down the street with a lateral weave ----
+const RAILS=[
+  new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0,EYE,6),  new THREE.Vector3(-3.4,EYE,-22), new THREE.Vector3(3.2,EYE,-52),
+    new THREE.Vector3(-2.6,EYE,-84), new THREE.Vector3(1.2,EYE,-116),
+  ],false,'catmullrom',0.5),
+  new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0,EYE,6),  new THREE.Vector3(3.6,EYE,-26), new THREE.Vector3(-3.0,EYE,-58),
+    new THREE.Vector3(2.4,EYE,-90), new THREE.Vector3(-1.0,EYE,-120),
+  ],false,'catmullrom',0.5),
+  new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0,EYE,6),  new THREE.Vector3(-2.2,EYE,-24), new THREE.Vector3(2.8,EYE,-56),
+    new THREE.Vector3(-3.4,EYE,-88), new THREE.Vector3(0.6,EYE,-118),
+  ],false,'catmullrom',0.5),
+];
+// where the cop stops. The last one is held until the stage clock runs out.
+const COVER_U=[0.04,0.28,0.52,0.76,0.95];
+
+/* ---------- stage worlds ----------
+ * OTTI house rule: vibrant, never flat. Three different times of night, three palettes.
+ * Every builder registers its cover props in G.covers, which is where enemies pop up from.
+ */
+function street(gp,R,E,pal){
+  G.covers.length=0;
+  E.scene.background=new THREE.Color(pal.sky);
+  E.scene.fog=new THREE.Fog(pal.fog,26,190);
+  // A light-gun game is unplayable if the target is a silhouette, so this street is lit
+  // for READABILITY first: sky fill, a strong key, and lamps down the whole walking path.
+  gp.add(new THREE.HemisphereLight(pal.amb,pal.road,2.4));
+  const key=new THREE.DirectionalLight(pal.key,3.0);key.position.set(-14,26,12);gp.add(key);
+  const fill=new THREE.DirectionalLight(pal.rimB,1.1);fill.position.set(16,10,-40);gp.add(fill);
+  for(let i=0;i<6;i++){
+    const lamp=new THREE.PointLight(i%2?pal.rimA:pal.rimB,55,54);
+    lamp.position.set(i%2?-8:8,6.5,-6-i*20);gp.add(lamp);
+  }
+
+  const road=new THREE.Mesh(new THREE.PlaneGeometry(46,220),
+    new THREE.MeshStandardMaterial({color:pal.road,roughness:.5,metalness:.3}));
+  road.rotation.x=-Math.PI/2;road.position.set(0,GROUND,-98);gp.add(road);
+
+  // flanking buildings with lit windows, one emissive tint each so the street reads neon
+  const wallM=new THREE.MeshStandardMaterial({color:pal.wall,roughness:.8,metalness:.15});
+  const winM=[pal.rimA,pal.rimB,pal.win].map(c=>{
+    const m=new THREE.MeshBasicMaterial({color:c,toneMapped:false});
+    m.color.multiplyScalar(0.75);        // bright, but held under the blowout knee
+    return m;
+  });
+  for(let i=0;i<22;i++){
+    const side=i%2?1:-1, h=9+R()*16, w=6+R()*5, d=7+R()*6;
+    const x=side*(11+R()*4), z=2-i*11-R()*4;
+    const b=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),wallM);
+    b.position.set(x,h/2,z);gp.add(b);
+    const q=new THREE.Mesh(new THREE.PlaneGeometry(w*0.6,h*0.6),winM[i%3]);
+    q.position.set(x-side*(w/2+0.05),h*0.55,z);q.rotation.y=side>0?-Math.PI/2:Math.PI/2;gp.add(q);
+  }
+
+  // cover: crates and low walls the enemies rise from behind. Two per band, alternating sides,
+  // so a hold always has something to watch on both flanks.
+  const crateM=new THREE.MeshStandardMaterial({color:pal.crate,roughness:.85});
+  const rail=E.rail();
+  for(let i=1;i<=22;i++){
+    const u=Math.min(0.99,i/23);
+    const p=rail.getPointAt(u,new THREE.Vector3());
+    for(const side of [-1,1]){
+      if(R()<0.18)continue;                       // a few gaps so the street is not a corridor of boxes
+      // Cover is deliberately LOW. The aim clip is a kneel, so a chest-high crate would
+      // hide the whole target and the player would be shooting at a box.
+      const off=2.6+R()*2.6;
+      const w=1.5+R()*1.3, h=0.62+R()*0.3, d=1.1+R()*0.6;
+      const c=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),crateM);
+      const x=p.x+side*off, z=p.z+(R()-.5)*3;
+      c.position.set(x,GROUND+h/2,z);
+      c.rotation.y=(R()-.5)*0.7;
+      gp.add(c);
+      G.covers.push({x,z,h});
+    }
+  }
+  return gp;
+}
+const PALETTES=[
+  {sky:0x140a22,fog:0x1d0f30,amb:0xffc8e0,key:0xffd0a0,rimA:0xff3d8b,rimB:0x2be0e0,win:0xffb020,
+   road:0x241a33,wall:0x181026,crate:0x4a3552},
+  {sky:0x0b1520,fog:0x102030,amb:0xa8d8ff,key:0xffb060,rimA:0xff7a20,rimB:0x2be0e0,win:0xfff0a0,
+   road:0x14202c,wall:0x101a24,crate:0x2f4152},
+  {sky:0x0f0a1e,fog:0x1a1030,amb:0xd8c0ff,key:0xc0a0ff,rimA:0x7a5cff,rimB:0x39e08a,win:0xff3d8b,
+   road:0x1c1630,wall:0x140f24,crate:0x3d3560},
+];
+
+/* ---------- kinds: balance lifted from GAMES.vcop2 ----------
+ * hp / pts / fire cadence are the canvas numbers. clip, dieHold and size are presentation.
+ */
+const KINDS={
+  // aimY lifts the hit circle off the shoes and onto the chest of a kneeling figure
+  thug:{hp:1,pts:200,file:'vc-thug',r:0.62,size:1.88,aimY:0.62,clip:'cover',dieHold:2.2,shooter:2.6},
+  boss:{hp:4,pts:800,file:'vc-boss',r:0.74,size:2.02,aimY:0.68,clip:'cover',dieHold:2.4,shooter:3.4},
+  civ :{hp:1,pts:-1,file:'vc-civ', r:0.62,size:1.86,aimY:0.62,clip:'cover',dieHold:2.0,friendly:true},
+};
+
+const E=createEngine({
+  gameId:'vcop2',
+  title:'ARCADE COP 2',
+  subtitle:'JUSTICE SHOT',
+  tint:'#ffd23d',
+  rails:RAILS,
+  stages:[
+    (gp,R,E)=>street(gp,R,E,PALETTES[0]),
+    (gp,R,E)=>street(gp,R,E,PALETTES[1]),
+    (gp,R,E)=>street(gp,R,E,PALETTES[2]),
+  ],
+  kinds:KINDS,
+  maxStages:3,
+  shieldStart:LIVES,        // this game's HUD is lives; the engine's shield counter IS the life count
+  railSpeed:1/STAGE_T,      // the rail is the walk path, but its lap length still sets the stage clock
+  maxLive:10,
+  poolPer:8,                // live enemies plus corpses still inside dieHold, per file
+
+  onStart(E){resetRun();},
+  onNextStage(E){resetLeg();G.thugT=0;G.bossT=0;G.civT=0;},
+
+  // the trigger. An empty magazine cancels the whole shot, sound included, and starts a reload.
+  onShoot(E,x,y){
+    if(G.reloading>0)return false;
+    if(G.mag<=0){startReload();return false;}
+    G.mag--;
+    return true;
+  },
+
+  onKill(e,E){
+    if(!e.k.friendly)return false;                 // let the engine bank the points
+    // shooting a civilian: the canvas cost 500 points and one life, and never exploded them
+    FS.score=Math.max(0,FS.score-500);
+    SFX.bad();
+    FS.hurt(1);
+    G.civFlash=1;
+    return true;
+  },
+
+  entityUpdate(e,dt,E){
+    // pop up from behind the crate: rise into view, then switch from the crouch to the aim
+    if(e.rise<1){
+      e.rise=Math.min(1,e.rise+dt/0.45);
+      e.obj.position.y=e.hideY+(e.upY-e.hideY)*(e.rise*e.rise*(3-2*e.rise));
+      if(e.rise>=1&&!e.k.friendly)E.playClip(e,'aim',{fade:0.22});
+    }
+    // the cop has walked past this one: retire it. The engine's own cutoff is 12 units
+    // BEHIND the camera, which leaves an enemy shooting the player in the back off screen.
+    if(E.camera.position.z-e.obj.position.z<-2.5){e.dead=1;E.recycle(e);return;}
+    E.faceCameraYaw(e,YAW);                        // yaw only: lookAt would tip a standing man over
+    if(e.k.shooter&&e.rise>=1&&FS.mode==='play'&&!e.behind){
+      e.timer-=dt;
+      if(e.timer<=0){
+        e.timer=e.k.shooter;
+        _mz.copy(e.obj.position);_mz.y+=1.05;
+        E.spark(_mz);                              // muzzle flash at chest height
+        blip(760,110,.08,'square',.26,true);
+        FS.hurt(1);
+      }
+    }
+  },
+
+  spawnTick(E,dt){
+    // seconds, converted from the canvas tick cadences: thug max(40,90-stage*14), boss 420, civ 260
+    G.thugT+=dt;G.bossT+=dt;G.civT+=dt;
+    const thugEvery=Math.max(40,90-FS.stage*14)/60;
+    if(G.thugT>=thugEvery){G.thugT=0;popUp('thug');}
+    if(G.bossT>=420/60){G.bossT=0;popUp('boss');}
+    if(G.civT>=260/60){G.civT=0;popUp('civ',rnd(0.7,1.4)*(Math.random()<.5?1:-1));}
+  },
+
+  // the camera of record. It has to be cfg.camera and not cfg.tick: the engine projects
+  // entities right after this, and cfg.tick runs after that, so a camera moved in tick
+  // would leave every hit test one frame behind the view.
+  camera(E,dt){ driveCover(E,dt); },
+
+  tick(E,dt){
+    // every mode: a reload must not stall because the player died or paused on the attract screen
+    if(G.reloading>0){G.reloading-=dt;if(G.reloading<=0)G.mag=MAG;}
+    if(G.civFlash>0)G.civFlash=Math.max(0,G.civFlash-dt*1.6);
+  },
+
+  onKey(e,E){ if(e.key==='r'||e.key==='R')startReload(); },
+
+  hud(E){
+    const ui=E.ui;
+    E.clearHUD();
+    E.drawTopBar();
+    // clamp: the engine leaves FS.stage one past the last stage on game over, which read "4/3"
+    E.txt('STAGE '+Math.min(FS.stage+1,3)+'/3',E.W/2,52,14,'rgba(255,255,255,.62)');
+
+    // enemy tells, drawn in world-to-screen space: a ring that closes as the shot lands,
+    // and a shout over civilians so the do-not-shoot target is never ambiguous
+    for(const en of FS.ents){
+      if(en.dead||en.behind||en.rise<0.35)continue;
+      const r=E.screenRadius(en);
+      if(en.k.friendly){
+        E.txt('NO!',en.sx,en.sy-r-12,15,'#9ce0ff');
+      }else if(en.k.shooter&&FS.mode==='play'){
+        const p=Math.max(0,Math.min(1,en.timer/en.k.shooter));
+        ui.strokeStyle=p<0.28?'#ff4444':'rgba(255,210,61,.75)';
+        ui.lineWidth=p<0.28?4:2.5;
+        ui.beginPath();ui.arc(en.sx,en.sy,r+7,-Math.PI/2,-Math.PI/2+(1-p)*Math.PI*2);ui.stroke();
+      }
+    }
+
+    // lives, left
+    for(let i=0;i<LIVES;i++){
+      ui.fillStyle=i<FS.shield?'#ff5b6e':'rgba(255,255,255,.13)';
+      ui.beginPath();ui.roundRect(14+i*17,E.H-26,13,13,3);ui.fill();
+    }
+    E.txt('LIVES',14,E.H-34,11,'rgba(255,255,255,.5)','left');
+    // magazine, right
+    for(let i=0;i<MAG;i++){
+      ui.fillStyle=i<G.mag?'#ffd23d':'rgba(255,255,255,.13)';
+      ui.beginPath();ui.roundRect(E.W-24-i*13,E.H-26,7,13,2);ui.fill();
+    }
+    E.txt('AMMO',E.W-14,E.H-34,11,'rgba(255,255,255,.5)','right');
+    if(G.reloading>0){
+      E.txt('RELOADING',E.W/2,E.H-26,17,'#ffd23d');
+    }else if(G.mag===0){
+      E.txt('R TO RELOAD',E.W/2,E.H-26,17,'#ff5b6e');
+    }
+    if(G.civFlash>0){
+      ui.globalAlpha=Math.min(1,G.civFlash);
+      E.txt('CIVILIAN DOWN  -500',E.W/2,E.H/2+96,22,'#ff5b6e');
+      ui.globalAlpha=1;
+    }
+    if(FS.mode==='play'&&!G.walking&&G.legT<1.1){
+      ui.globalAlpha=Math.min(1,1.1-G.legT);
+      E.txt('IN COVER',E.W/2,96,18,'#9ce0ff');ui.globalAlpha=1;
+    }
+    if(FS.mode==='play'&&G.walking){
+      ui.globalAlpha=.8;E.txt('MOVING UP',E.W/2,96,18,'rgba(255,255,255,.75)');ui.globalAlpha=1;
+    }
+
+    E.drawBanner();
+    E.drawCrosshair();
+    E.drawAttract();
+    E.drawGameOver();
+  },
+});
+
+// FS is the engine's state. G is the namespaced bag the engine reserves for the game.
+const FS=E.state, G=FS.game;
+const _mz=new THREE.Vector3(), _cp=new THREE.Vector3(), _cl=new THREE.Vector3();
+// LOAD BEARING: the stage builders write into this on the first build, which E.start()
+// triggers below. It has to exist before then, and it must NOT be reset per run: it
+// belongs to the stage, and the builder clears it itself.
+G.covers=[];
+
+function resetLeg(){G.leg=0;G.legT=0;G.walking=false;G.camU=COVER_U[0];}
+function resetRun(){resetLeg();G.mag=MAG;G.reloading=0;G.civFlash=0;G.thugT=0;G.bossT=0;G.civT=0;}
+resetRun();
+
+function startReload(){
+  if(FS.mode!=='play'||G.reloading>0||G.mag===MAG)return;
+  G.reloading=RELOAD_T;
+  blip(500,250,.05,'square',.2,true);
+  setTimeout(()=>blip(700,350,.05,'square',.2,true),90);
+}
+
+/* ---------- stop-and-go cover camera ----------
+ * Runs from cfg.camera, in place of the engine's rail ride and before entities project.
+ * The rail supplies the path; the schedule below supplies the pacing.
+ */
+function place(E,u,walking,t){
+  E.railPos(u,_cp);
+  E.railLook(u+0.03,_cl);
+  _cp.y=walking?EYE:CROUCH;                        // the cop drops behind cover on a hold
+  if(walking)_cp.y+=Math.sin(t*11)*0.045;          // head bob, only while moving
+  E.camera.position.copy(_cp);
+  _cl.y=_cp.y+0.06;                                // look level down the street, never at the road
+  E.camera.lookAt(_cl);
+  E.camera.rotation.z=walking?Math.sin(t*5.5)*0.012:0;
+  G.camU=u;
+}
+function driveCover(E,dt){
+  if(FS.mode!=='play'){
+    // attract and game over: a slow dolly so the street is never a frozen postcard.
+    // Ping-pong rather than modulo: a wrapping u hard-cut the view back to the street
+    // corner every 28 seconds, which read as a glitch on the attract screen.
+    G.legT+=dt;
+    const w=(G.legT*0.035)%2;
+    place(E,Math.min(0.96,w>1?2-w:w),true,FS.t);
+    return;
+  }
+  G.legT+=dt;
+  const i=Math.min(G.leg,COVER_U.length-1);
+  if(G.walking){
+    const p=Math.min(1,G.legT/WALK_T), s=p*p*(3-2*p);
+    const a=COVER_U[i], b=COVER_U[Math.min(i+1,COVER_U.length-1)];
+    place(E,a+(b-a)*s,true,FS.t);
+    if(p>=1){G.walking=false;G.legT=0;G.leg=Math.min(i+1,COVER_U.length-1);}
+  }else{
+    place(E,COVER_U[i],false,FS.t);
+    // the last cover point is held to the end of the stage: there is nowhere further to walk
+    if(G.legT>=HOLD_T&&G.leg<COVER_U.length-1){G.walking=true;G.legT=0;}
+  }
+}
+
+/* ---------- spawning: enemies rise from a crate ahead of the cop ---------- */
+function popUp(kind,vx){
+  const cam=E.camera.position;
+  // a cover prop in front of the cop, far enough to read, near enough to hit
+  let best=null,bd=1e9;
+  for(const c of G.covers){
+    const dz=cam.z-c.z;                            // the street runs toward -Z
+    // near enough that a 1.8 unit figure is a readable target on a 540px frame, far
+    // enough that the pop-up is not in the player's face. 40 units read as a 20px speck.
+    if(dz<6||dz>16)continue;
+    const dx=Math.abs(c.x-cam.x);
+    if(dx>7)continue;
+    const d=Math.hypot(dx,dz);
+    if(d<bd){bd=d;best=c;}
+  }
+  if(!best)return null;
+  const upY=GROUND, hideY=GROUND-1.85;             // sunk below the road, hidden by ground and crate
+  const at=new THREE.Vector3(best.x+rnd(-0.3,0.3),hideY,best.z-0.5);
+  const e=E.spawn(kind,{at,vel:vx?new THREE.Vector3(vx,0,0):undefined});
+  if(!e)return null;
+  e.rise=0;e.hideY=hideY;e.upY=upY;e.timer=KINDS[kind].shooter||0;
+  return e;
+}
+
+// world-space debug beside the engine's six screen-space hooks. __arcEnts reports where a
+// target is on the FRAME, which cannot tell "off screen" apart from "stood in the wrong place".
+window.__arcDbg=()=>({
+  cam:[+E.camera.position.x.toFixed(2),+E.camera.position.y.toFixed(2),+E.camera.position.z.toFixed(2)],
+  leg:G.leg,walking:G.walking,legT:+G.legT.toFixed(2),mag:G.mag,covers:G.covers.length,
+  pools:Object.fromEntries(Object.keys(E.pool).map(f=>[f,E.pool[f].length])),
+  ents:FS.ents.map(e=>({k:e.kind,dead:e.dead,dying:+(e.dying||0).toFixed(2),rise:+(e.rise||0).toFixed(2),
+    pos:[+e.obj.position.x.toFixed(2),+e.obj.position.y.toFixed(2),+e.obj.position.z.toFixed(2)],
+    dz:+(E.camera.position.z-e.obj.position.z).toFixed(2),
+    scr:[Math.round(e.sx),Math.round(e.sy)],clip:E.clipName(e)})),
+});
+
+E.start();   // builds stage 0, installs the six window.__arc* hooks, starts the rAF loop
+
+if(location.hash==='#selftest')(async()=>{
+  const A=(c,m)=>{if(!c)throw new Error('FAIL: '+m);};
+  A(typeof window.__arcStep==='function','__arcStep exists');
+  A(typeof window.__arcShoot==='function','__arcShoot exists');
+  A(typeof window.__arcEnts==='function','__arcEnts exists');
+  A(typeof window.__arcStop==='function','__arcStop exists');
+  A(window.__arcGame==='vcop2','__arcGame is vcop2');
+  A(FS.mode==='attract','starts in attract');
+  A(E.W===960&&E.H===540,'engine owns the frame size');
+  const p=E.railPos(0,new THREE.Vector3()), p2=E.railPos(0.5,new THREE.Vector3());
+  A(p.distanceTo(p2)>1,'rail actually travels');
+  A(E.getStageGroup()&&E.getStageGroup().children.length>10,'stage 0 built with content');
+  A(G.covers.length>6,'stage registered cover props ('+G.covers.length+')');
+
+  FS.start();
+  A(FS.mode==='play'&&FS.shield===LIVES&&FS.score===0,'start resets to three lives');
+  A(G.mag===MAG,'start resets the magazine');
+
+  // magazine: six shots, then the trigger is cancelled and a reload starts
+  for(let i=0;i<MAG;i++)window.__arcShoot(5,5);
+  A(G.mag===0,'six shots empty the magazine');
+  window.__arcShoot(5,5);
+  A(G.reloading>0,'the seventh shot starts a reload instead of firing');
+  const magAt=G.mag;
+  window.__arcStep(2,0.016);
+  A(G.mag===magAt,'the magazine does not refill mid reload');
+  window.__arcStep(70,0.016);   // > RELOAD_T
+  A(G.mag===MAG&&G.reloading<=0,'reload completes and refills');
+
+  // the cover camera: holds still, then moves
+  const before=E.camera.position.clone();
+  window.__arcStep(30,0.016);
+  A(E.camera.position.distanceTo(before)<0.02,'camera holds still in cover');
+  G.walking=true;G.legT=0;
+  window.__arcStep(30,0.016);
+  A(E.camera.position.distanceTo(before)>0.05,'camera advances while moving up');
+
+  // wait for the clone pool so the rigged assertions have something to spawn
+  await new Promise(r=>{const w=()=>(E.pool['vc-thug']&&E.pool['vc-thug'].length)?r():setTimeout(w,50);w();});
+  FS.start();
+  window.__arcStep(1,0.016);   // let the cover camera place itself before picking a crate
+  const t=popUp('thug');
+  A(t,'a thug pops up from a cover prop');
+  A(E.clipName(t)==='cover','a thug starts crouched in cover');
+  A(t.obj.position.y<GROUND-1,'a thug starts hidden below the street');
+  window.__arcStep(40,0.016);   // 0.64s > the 0.45s rise
+  A(t.obj.position.y>=GROUND-0.01,'the thug rises to street level');
+  A(E.clipName(t)==='aim','the risen thug switches to the aim clip');
+  A(Math.abs(t.obj.rotation.x)<1e-6&&Math.abs(t.obj.rotation.z)<1e-6,'enemies are yawed, never pitched');
+
+  window.__arcStep(2,0.016);
+  A(t.sx>=0&&t.sx<=E.W,'entity projects into screen space');
+  A(E.hitTest(t.sx,t.sy)===t,'hitTest finds it at its own screen position');
+  const sc=FS.score;
+  E.killEnt(t);E.killEnt(t);
+  A(FS.score===sc+200,'a thug scores 200 exactly once');
+  A(E.clipName(t)==='die'&&t.dying>0,'a dead thug plays its death clip before recycling');
+
+  // the shooter clock costs a life
+  FS.start();
+  window.__arcStep(1,0.016);
+  const s=popUp('thug');
+  window.__arcStep(40,0.016);
+  s.timer=0.001;
+  const lives=FS.shield;
+  window.__arcStep(2,0.016);
+  A(FS.shield===lives-1,'an enemy shot costs a life');
+
+  // friendly fire: 500 points and a life, and no explosion
+  FS.start();
+  window.__arcStep(1,0.016);
+  FS.score=900;
+  const c=popUp('civ');
+  A(c,'a civilian spawns');
+  const lv=FS.shield;
+  E.killEnt(c);
+  A(FS.score===400,'shooting a civilian costs 500 points');
+  A(FS.shield===lv-1,'shooting a civilian costs a life');
+  FS.start();window.__arcStep(1,0.016);FS.score=100;
+  const c2=popUp('civ');E.killEnt(c2);
+  A(FS.score===0,'the civilian penalty floors at zero, never negative');
+
+  // three stages, and the pool survives them
+  FS.start();
+  window.__arcStep(1,0.016);
+  const pool0=E.pool['vc-thug'].length;
+  popUp('thug');popUp('thug');
+  FS.nextStage();
+  A(FS.stage===1,'stage advances');
+  window.__arcStep(2,0.016);
+  A(E.pool['vc-thug'].length===pool0,'every clone comes back on a stage change');
+  FS.nextStage();FS.nextStage();
+  A(FS.mode==='over','the run ends after three stages');
+
+  A(typeof E.drawHUD==='function','drawHUD defined');
+  FS.mode='over';E.drawHUD();FS.mode='attract';E.drawHUD();FS.mode='play';E.drawHUD();
+
+  window.__selftest='OK';
+  console.log('SELFTEST OK');
+})().catch(err=>{window.__selftest=String(err&&err.message||err);console.error(err);});
+</script>
+</body>
+</html>
