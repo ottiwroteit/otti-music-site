@@ -162,6 +162,15 @@ function driveFlipper(f){
   }
   if(!f.pressed)f._did=false;
 }
+// Attract mode plays the ball itself, but the flippers must stay DEAD STILL until the
+// visitor starts a game. driveFlipper is a spring, so the auto-launched demo ball still
+// knocked a resting flipper by up to ~12deg on contact and it read as the arms moving on
+// their own. holdRest pins the flipper hard at rest; the caller also drops its ball
+// collision while idle so nothing can push it. Flippers move on user input only.
+function holdRest(f){
+  f.pressed=false;f._did=false;
+  Body.setAngle(f.body,f.rest);Body.setAngularVelocity(f.body,0);
+}
 
 let ball2d=null;
 function spawnBall(){
@@ -1398,8 +1407,14 @@ function loopBody(){
   // physics — flipper spring recomputed EVERY substep (once-per-frame + multi
   // substep double-applies the velocity -> overshoot -> flippers flap on their own)
   if(game.charging&&game.charge<100)game.charge+=130*dt;
+  // Flippers are live ONLY while the visitor is playing. Off the clock they are pinned at
+  // rest and stop colliding with the ball, so the attract ball passes through and can never
+  // knock them. mask 0 = no ball contact; 0x0002 = the ball's category (see makeFlipper).
+  const flipLive=game.state==='playing';
+  leftFlip.body.collisionFilter.mask=rightFlip.body.collisionFilter.mask=flipLive?0x0002:0;
   for(let ms=dt*1000;ms>0;ms-=1000/60){
-    driveFlipper(leftFlip);driveFlipper(rightFlip);
+    if(flipLive){driveFlipper(leftFlip);driveFlipper(rightFlip);}
+    else{holdRest(leftFlip);holdRest(rightFlip);}
     Engine.update(engine,Math.min(1000/60,ms));
   }
   if(game.state==='playing'&&game.launched&&ball2d&&ball2d.position.y>PH+30){game.launched=false;drain();}
@@ -1551,6 +1566,30 @@ if(location.hash==='#selftest'){
   A(!!CAMS.arcade,'arcade cam state');
   setCam('arcade');A(camState==='arcade','enter arcade');
   setCam('wide');A(camState==='wide','exit arcade');
+
+  // flippers must stay dead still in attract even with the demo ball landing on them.
+  // On the old spring-only code the auto-launched ball knocked a resting flipper ~12deg;
+  // this drops a ball straight onto the left flipper in a non-playing state and asserts
+  // both flippers hold within ~1deg of rest and stop colliding with the ball.
+  game.state='over';game.attract=true;leftFlip.pressed=false;rightFlip.pressed=false;
+  Body.setAngle(leftFlip.body,leftFlip.rest);Body.setAngularVelocity(leftFlip.body,0);
+  spawnBall();
+  Body.setPosition(ball2d,{x:leftFlip.px+leftFlip.dir*leftFlip.len*0.5,y:leftFlip.py-28});
+  Body.setVelocity(ball2d,{x:0,y:15});
+  let flipPeak=0;
+  for(let fr=0;fr<48;fr++){
+    const live=game.state==='playing';
+    leftFlip.body.collisionFilter.mask=rightFlip.body.collisionFilter.mask=live?0x0002:0;
+    for(let ms=1000/60;ms>0;ms-=1000/60){
+      if(live){driveFlipper(leftFlip);driveFlipper(rightFlip);}
+      else{holdRest(leftFlip);holdRest(rightFlip);}
+      Engine.update(engine,Math.min(1000/60,ms));
+    }
+    flipPeak=Math.max(flipPeak,Math.abs(leftFlip.body.angle-leftFlip.rest),Math.abs(rightFlip.body.angle-rightFlip.rest));
+  }
+  A(flipPeak<0.02,'flippers hold at rest in attract with the demo ball on them ('+(flipPeak*57.3).toFixed(1)+'deg)');
+  A(leftFlip.body.collisionFilter.mask===0&&rightFlip.body.collisionFilter.mask===0,'idle flippers do not collide with the ball');
+
   console.log('SELFTEST OK');
 }
 </script>
