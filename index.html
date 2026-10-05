@@ -618,8 +618,10 @@ document.body.appendChild(crtVideo);
 crtVideo.play().catch(()=>{});                 // muted autoplay; resumed on first input below as a fallback
 const tmTex=new THREE.VideoTexture(crtVideo);
 tmTex.colorSpace=THREE.SRGBColorSpace;
-// some browsers gate even muted autoplay until the first gesture — kick it then
-addEventListener('pointerdown',()=>{if(crtVideo.paused)crtVideo.play().catch(()=>{});},{once:true});
+// some browsers gate even muted autoplay until the first real gesture — kick it on any of them
+function kickCRT(){ if(crtVideo.paused) crtVideo.play().catch(()=>{});
+  if(!crtVideo.paused) ['pointerdown','keydown','touchstart'].forEach(e=>removeEventListener(e,kickCRT)); }
+['pointerdown','keydown','touchstart'].forEach(e=>addEventListener(e,kickCRT));
 // small printed labels for the deck and the TV bezel
 function plateTex(text,fg,bg,size){const [c,x]=makeCanvas(256,64);
   if(bg){x.fillStyle=bg;x.fillRect(0,0,256,64);}else x.clearRect(0,0,256,64);
