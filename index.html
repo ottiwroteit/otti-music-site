@@ -605,32 +605,30 @@ function drawLED(){
   ledTex.needsUpdate=true;
 }
 
-/* ---- telemetry monitor ---- */
-const [tmC,tm]=makeCanvas(640,760);
-const tmTex=ctex(tmC);
-let sparks=Array.from({length:40},()=>Math.random());
-function drawTelemetry(){
-  tm.fillStyle='#04070a';tm.fillRect(0,0,640,760);
-  tm.strokeStyle='#0f2a20';tm.lineWidth=1;
-  for(let y=0;y<760;y+=38){tm.beginPath();tm.moveTo(0,y);tm.lineTo(640,y);tm.stroke();}
-  // radial gauge
-  tm.strokeStyle='#39ff88';tm.lineWidth=10;tm.shadowColor='#39ff88';tm.shadowBlur=10;
-  tm.beginPath();tm.arc(120,110,64,Math.PI*.75,Math.PI*.75+ (stats.plays%100)/100*Math.PI*1.5);tm.stroke();
-  tm.shadowBlur=0;tm.fillStyle='#39ff88';tm.font='500 22px "DM Mono",monospace';
-  tm.fillText('NET '+(stats.plays%100)+'%',82,118);
-  // green pixel blocks
-  for(let i=0;i<48;i++){tm.fillStyle=Math.random()<.5?'#1d5c3a':'#39ff88';
-    tm.fillRect(300+(i%8)*40,52+((i/8)|0)*26,30,18);}
-  // colored bars
-  sparks.push(Math.random());sparks.shift();
-  const cols=['#ff5a2a','#2be0e0','#ffb020','#ff2fb0','#39ff88'];
-  for(let i=0;i<5;i++){tm.fillStyle=cols[i];
-    tm.fillRect(40,270+i*44,60+sparks[i*7]*440,20);}
-  // scrolling log
-  tm.font='500 20px "DM Mono",monospace';
-  logLines.forEach((l,i)=>{tm.fillStyle=i%3?'#4fd08a':'#a2f5c8';tm.fillText(l,32,520+i*17);});
-  tmTex.needsUpdate=true;
-}
+/* ---- vintage CRT screen (replaces the old telemetry monitor) ----
+   The real VSCO clip (assets/vhs-loop.mp4, cropped to just the glass: OTTI's
+   "for what it's worth..." creeping up in cyan script) loops muted on the TV. */
+const crtVideo=document.createElement('video');
+Object.assign(crtVideo,{src:'assets/vhs-loop.mp4',loop:true,muted:true,autoplay:true,playsInline:true});
+crtVideo.setAttribute('playsinline','');crtVideo.setAttribute('muted','');
+// kept in the DOM but effectively invisible — some browsers won't decode/autoplay a fully
+// detached or display:none video, which would freeze the TV on its first frame
+crtVideo.style.cssText='position:fixed;left:-20px;top:-20px;width:2px;height:2px;opacity:0;pointer-events:none';
+document.body.appendChild(crtVideo);
+crtVideo.play().catch(()=>{});                 // muted autoplay; resumed on first input below as a fallback
+const tmTex=new THREE.VideoTexture(crtVideo);
+tmTex.colorSpace=THREE.SRGBColorSpace;
+// some browsers gate even muted autoplay until the first real gesture — kick it on any of them
+function kickCRT(){ if(crtVideo.paused) crtVideo.play().catch(()=>{});
+  if(!crtVideo.paused) ['pointerdown','keydown','touchstart'].forEach(e=>removeEventListener(e,kickCRT)); }
+['pointerdown','keydown','touchstart'].forEach(e=>addEventListener(e,kickCRT));
+// small printed labels for the deck and the TV bezel
+function plateTex(text,fg,bg,size){const [c,x]=makeCanvas(256,64);
+  if(bg){x.fillStyle=bg;x.fillRect(0,0,256,64);}else x.clearRect(0,0,256,64);
+  x.fillStyle=fg;x.font='600 '+(size||26)+'px "DM Mono",monospace';x.textAlign='center';x.textBaseline='middle';
+  x.fillText(text,128,36);return ctex(c);}
+const mslDoorTex=plateTex('MakeSenseLater.com','#14201c','#cdbfa0',24);
+const mslBrandTex=plateTex('MSL','rgba(40,40,44,.9)',null,30);
 /* ---- Y2K OS monitor preview (wide-zoom stand-in; the real app loads on click) ---- */
 // Real screenshot of the running Y2K OS (assets/y2k-os-preview.png) so wide zoom
 // matches what you get on click. Dimmed under the bloom knee by the 0.72 screen color.
@@ -1238,7 +1236,30 @@ const emMon=monitor(deskRG,emTex,1.55,.95,-.55,TOP+.925,-.35,-0.05);  // earth h
 const emScreen=emMon.children[1];   // the PlaneGeometry screen mesh
 emScreen.material.color.setScalar(0.72); // keep the pale OS chrome under the bloom knee
 window._emScreen=emScreen;
-monitor(deskRG,tmTex,1.1,1.35,.72,TOP+1.125,-.22,-0.28);  // telemetry
+// vintage CRT TV on a VHS/DVD deck — sits ON the desk where the telemetry monitor used to float
+function vintageTV(parent,tex,x,z,ry){
+  const g=new THREE.Group();
+  const silver=new THREE.MeshStandardMaterial({color:0xc7bfa9,roughness:.55,metalness:.3});  // warm champagne
+  const dark=new THREE.MeshStandardMaterial({color:0x121010,roughness:.5});
+  const put=(geo,mat,px,py,pz)=>{const m=new THREE.Mesh(geo,mat);m.position.set(px,py,pz);g.add(m);return m;};
+  const deckH=.17,deckD=.52, tvW=.9,tvH=.72,tvD=.58, fz=deckD/2+.002;
+  // --- VHS / DVD deck (bottom) ---
+  put(new THREE.BoxGeometry(.94,deckH,deckD),silver,0,deckH/2,0);
+  put(new THREE.PlaneGeometry(.36,.085),new THREE.MeshBasicMaterial({map:mslDoorTex,toneMapped:false}),-.24,deckH*.6,fz);   // cassette door + MSL label
+  put(new THREE.PlaneGeometry(.28,.05),dark,.24,deckH*.62,fz);                                                              // DVD tray slot
+  for(let i=0;i<8;i++)put(new THREE.BoxGeometry(.018,.014,.01),dark,-.33+i*.045,deckH*.2,fz);                               // transport buttons
+  put(new THREE.CircleGeometry(.009,12),new THREE.MeshBasicMaterial({color:0xff3b2a,toneMapped:false}),-.4,deckH*.2,fz);    // red power LED
+  put(new THREE.CircleGeometry(.007,12),new THREE.MeshBasicMaterial({color:0x37ff8a,toneMapped:false}),-.37,deckH*.2,fz);   // green LED
+  // --- CRT TV (on top) ---
+  put(new THREE.BoxGeometry(tvW,tvH,tvD),silver,0,deckH+tvH/2,0);
+  const sy=deckH+tvH*.56, sfz=tvD/2+.002;
+  put(new THREE.PlaneGeometry(tvW*.84,tvH*.72),new THREE.MeshStandardMaterial({color:0x070807,roughness:.25}),0,sy,sfz);    // dark bezel
+  put(new THREE.PlaneGeometry(tvW*.75,tvH*.63),new THREE.MeshBasicMaterial({map:tex,toneMapped:false}),0,sy,sfz+.006);      // CRT screen
+  put(new THREE.PlaneGeometry(.16,.032),new THREE.MeshBasicMaterial({map:mslBrandTex,transparent:true,toneMapped:false}),0,deckH+tvH*.09,tvD/2+.004); // brand
+  const glow=new THREE.PointLight(0x5fd3ff,.7,1.3);glow.position.set(0,sy,tvD/2+.25);g.add(glow);
+  g.position.set(x,TOP,z);g.rotation.y=ry;parent.add(g);return g;
+}
+vintageTV(deskRG,tmTex,.78,-.08,-0.34);   // right side of the desk, angled toward the room
 // keyboard with green key rows + mouse
 const kb=new THREE.Mesh(new THREE.BoxGeometry(.85,.035,.28),
   new THREE.MeshStandardMaterial({color:0x11150f,roughness:.5}));
@@ -1253,7 +1274,7 @@ mouse.scale.set(1,.55,1.35);mouse.position.set(.52,TOP+.02,.42);deskRG.add(mouse
 
 /* cables dropping from the monitors behind the desk */
 const cableM=new THREE.MeshStandardMaterial({color:0x111116,roughness:.6});
-[[-.55,-.38],[.72,-.25]].forEach(([x,z])=>{
+[[-.55,-.38]].forEach(([x,z])=>{
   const pts=[new THREE.Vector3(x,TOP+.35,z-.06),new THREE.Vector3(x+.14,TOP-.45,z-.3),new THREE.Vector3(x+.3,-1.32,z-.18)];
   deskRG.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts),20,.008,6),cableM));});
 
@@ -1307,10 +1328,12 @@ if(dnEl)dnEl.addEventListener('click',()=>{skyTarget=skyTarget<0.5?1:0;dnEl.clas
 /* AI-generated music props (assets/props/*.glb) — missing file = silently skipped */
 const PROP_LIST=[
   // [file, parent, x, y, z, targetSize, rotY, rotX]
-  ['mic',       deskRG,  .15, TOP, -.42, .34,  0.2, 0],
-  ['speaker',   deskRG, -1.15,TOP, -.35, .38,  0.5, 0],
-  ['speaker',   deskRG,  1.15,TOP, -.35, .38, -0.5, 0],   // mirrored on the right edge
-  ['headphones',deskRG, -.75, TOP,  .3,  .28,  0.9, 0],
+  // music gear lives on the LEFT desk with the MPCs: studio monitors flank the row, mic and
+  // headphones sit up front. The right desk is now a clean computer workstation.
+  ['speaker',   deskLG, -1.16,TOP, -.06, .38,  0.6, 0],   // left studio monitor, flanking the MPC row
+  ['speaker',   deskLG,  1.16,TOP, -.06, .38, -0.6, 0],   // right studio monitor, mirrored
+  ['mic',       deskLG,  .66, TOP,  .40, .34,  0.2, 0],   // mic up front, right of the lava lamp
+  ['headphones',deskLG, -.42, TOP,  .42, .28,  0.9, 0],   // headphones resting front-center
   // the MPC lineup — three playable machines in a row across the back of the left desk
   ['mpc-runaway',deskLG,-.78, TOP, -.38, .54, 0.1, 0],   // cream — RUNAWAY
   ['mpc-power',  deskLG,-.10, TOP, -.38, .54, 0.0, 0],   // red — POWER
@@ -1424,7 +1447,6 @@ window._dbg=()=>({state:camState,camPos:camera.position.toArray().map(v=>+v.toFi
   target:camTarget().pos.toArray().map(v=>+v.toFixed(2)),
   earthLoaded:earthImg.complete&&earthImg.naturalWidth>0});
 const clock3=new THREE.Clock();
-let tmAccum=0;
 function loop(){
   requestAnimationFrame(loop);
   try{loopBody();}catch(e){window.__loopErr=(e&&e.stack)||String(e);throw e;}
@@ -1538,9 +1560,7 @@ function loopBody(){
   }
 
   // textures
-  drawLED();
-  tmAccum+=dt;
-  if(tmAccum>0.2){drawTelemetry();tmAccum=0;}
+  drawLED();   // the LED marquee board still redraws; the TV screen is a looping VideoTexture (self-updating)
 
   // camera: damped fly-to between states + idle float + parallax
   const ct=camTarget(), ck=Math.min(1,dt*2.2);
