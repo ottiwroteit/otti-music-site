@@ -95,7 +95,7 @@
 <iframe id="mpcframe" title="OTTI MPC2000XL" loading="lazy" allow="autoplay"></iframe>
 <iframe id="arcframe" title="MSL ARCADE" loading="lazy" allow="autoplay"></iframe>
 <button id="arcchip">&#9664; ARCADE</button>
-<div class="hint"><kbd>&larr;</kbd><kbd>&rarr;</kbd> flippers · <kbd>Space</kbd> launch · mobile: tap sides</div>
+<div class="hint">hover a flipper or <kbd>&larr;</kbd><kbd>&rarr;</kbd> · <kbd>Space</kbd> launch · mobile: tap sides</div>
 
 <script>
 /* ================================================================
@@ -162,6 +162,11 @@ function driveFlipper(f){
   }
   if(!f.pressed)f._did=false;
 }
+// A flipper is "pressed" if ANY control source wants it up: an arrow key held, the mouse
+// hovering over it, or a touch on its side. Each source writes its own flag and we OR them,
+// so hover doesn't cancel a held key and vice versa. Only meaningful while playing; the
+// handlers below refuse to set any source unless game.state==='playing'.
+function updatePressed(f){f.pressed=!!(f.keyHeld||f.hover||f.tap);}
 // Attract mode plays the ball itself, but the flippers must stay DEAD STILL until the
 // visitor starts a game. The arms "tweaking on their own" was NEVER an attract AI: it was
 // the flipper trying to sit at rest while its pivot Constraint and the demo ball tugged it.
@@ -181,7 +186,7 @@ function setFlipperLive(live){
       // NB: don't touch f.pressed here -- the input handlers own it, so a key held down as
       // the game starts still counts.
     }else{
-      f.pressed=false;f._did=false;              // going idle: forget any held press
+      f.pressed=false;f._did=false;f.keyHeld=false;f.hover=false;f.tap=false;   // going idle: forget every control source
       Body.setAngle(f.body,f.rest);Body.setAngularVelocity(f.body,0);
       f.body.collisionFilter.mask=0;             // demo ball passes through, never touches it
       Body.setStatic(f.body,true);               // frozen: nothing can move it
@@ -258,15 +263,18 @@ setInterval(tickClock,1000);tickClock();
 /* ---- input ---- */
 const playbtn=document.getElementById('playbtn');
 playbtn.addEventListener('click',startGame);
+// Flippers respond ONLY while playing (after Play). Arrow/A-D keys, mouse hover (wired in the
+// module below) and a touch on either side all feed updatePressed via keyHeld/hover/tap.
 addEventListener('keydown',e=>{
   if([' ','ArrowLeft','ArrowRight'].includes(e.key))e.preventDefault();
-  if(e.key==='ArrowLeft'||e.key==='a'||e.key==='A')leftFlip.pressed=true;
-  if(e.key==='ArrowRight'||e.key==='d'||e.key==='D')rightFlip.pressed=true;
-  if(e.key===' '){ if(game.state!=='playing')startGame(); else if(!game.launched)game.charging=true; }
+  const playing=game.state==='playing';
+  if(e.key==='ArrowLeft'||e.key==='a'||e.key==='A'){leftFlip.keyHeld=playing;updatePressed(leftFlip);}
+  if(e.key==='ArrowRight'||e.key==='d'||e.key==='D'){rightFlip.keyHeld=playing;updatePressed(rightFlip);}
+  if(e.key===' '){ if(!playing)startGame(); else if(!game.launched)game.charging=true; }
 });
 addEventListener('keyup',e=>{
-  if(e.key==='ArrowLeft'||e.key==='a'||e.key==='A')leftFlip.pressed=false;
-  if(e.key==='ArrowRight'||e.key==='d'||e.key==='D')rightFlip.pressed=false;
+  if(e.key==='ArrowLeft'||e.key==='a'||e.key==='A'){leftFlip.keyHeld=false;updatePressed(leftFlip);}
+  if(e.key==='ArrowRight'||e.key==='d'||e.key==='D'){rightFlip.keyHeld=false;updatePressed(rightFlip);}
   if(e.key===' '&&game.charging){launchBall(18+game.charge*0.10);game.charging=false;game.charge=0;}
 });
 addEventListener('pointerdown',e=>{
@@ -274,9 +282,10 @@ addEventListener('pointerdown',e=>{
   if(e.target.closest('button,header'))return;
   if(game.state!=='playing')return;
   if(!game.launched){launchBall(24);return;}
-  (e.clientX<innerWidth/2?leftFlip:rightFlip).pressed=true;
+  // touch has no hover, so a tap on a side flips that flipper (desktop uses hover, below)
+  if(e.pointerType==='touch'){const f=e.clientX<innerWidth/2?leftFlip:rightFlip;f.tap=true;updatePressed(f);}
 });
-addEventListener('pointerup',()=>{leftFlip.pressed=false;rightFlip.pressed=false;});
+addEventListener('pointerup',()=>{leftFlip.tap=false;rightFlip.tap=false;updatePressed(leftFlip);updatePressed(rightFlip);});
 </script>
 
 <script type="importmap">
@@ -1383,7 +1392,24 @@ addEventListener('resize',()=>{
 
 /* mouse parallax */
 let mx=0,my=0;
-addEventListener('pointermove',e=>{mx=(e.clientX/innerWidth-.5);my=(e.clientY/innerHeight-.5);});
+// Hover control: while playing, whichever flipper the mouse is over is raised; move the
+// mouse off it and it drops. Each flipper mesh is projected to screen and the pointer is
+// tested against it with a generous radius so it is easy to catch. Only when the pinball is
+// the view (wide/table) and not focused on the monitor.
+const _hoverV=new THREE.Vector3(), FLIP_HOVER_R=150;
+function flipperHovered(mesh,cx,cy){
+  mesh.getWorldPosition(_hoverV); _hoverV.project(camera);
+  if(_hoverV.z>1)return false;                                  // behind the camera
+  const sx=(_hoverV.x*0.5+0.5)*innerWidth, sy=(-_hoverV.y*0.5+0.5)*innerHeight;
+  return Math.hypot(cx-sx,cy-sy)<FLIP_HOVER_R;
+}
+addEventListener('pointermove',e=>{
+  mx=(e.clientX/innerWidth-.5);my=(e.clientY/innerHeight-.5);
+  const canPlay=game.state==='playing'&&!window.__inScreen&&(camState==='wide'||camState==='table');
+  leftFlip.hover = canPlay && e.pointerType!=='touch' && flipperHovered(leftFlipM,e.clientX,e.clientY);
+  rightFlip.hover= canPlay && e.pointerType!=='touch' && flipperHovered(rightFlipM,e.clientX,e.clientY);
+  updatePressed(leftFlip);updatePressed(rightFlip);
+});
 
 /* redraw art once fonts are in */
 drawPlayfield();drawBackglass();
@@ -1452,8 +1478,16 @@ function loopBody(){
   if(ball2d){ballMesh.visible=true;
     ballMesh.position.set(mapX(ball2d.position.x),11*S,mapZ(ball2d.position.y));}
   else ballMesh.visible=false;
-  leftFlipM.rotation.y=-leftFlip.body.angle;
-  rightFlipM.rotation.y=-rightFlip.body.angle;
+  // While playing, the mesh follows the physics arm. Otherwise it is PINNED to rest in the
+  // render itself -- the last-line guarantee that the arms are still when nobody is playing,
+  // independent of anything the physics body might do.
+  if(flipLive){
+    leftFlipM.rotation.y=-leftFlip.body.angle;
+    rightFlipM.rotation.y=-rightFlip.body.angle;
+  }else{
+    leftFlipM.rotation.y=-leftFlip.rest;
+    rightFlipM.rotation.y=-rightFlip.rest;
+  }
   for(const g of bumperMeshes){
     const b=g.userData.body;
     if(b._glow>0){
@@ -1606,11 +1640,24 @@ if(location.hash==='#selftest'){
   A(leftFlip.body.isStatic&&rightFlip.body.isStatic,'idle flippers are frozen static');
   A(leftFlip.body.collisionFilter.mask===0&&rightFlip.body.collisionFilter.mask===0,'idle flippers do not collide with the ball');
   A(jitter<0.001,'flippers show zero frame-to-frame motion in attract ('+(jitter*57.3).toFixed(2)+'deg/frame)');
-  // and play must restore a real swing
-  setFlipperLive(true);game.state='playing';leftFlip.pressed=true;
-  for(let fr=0;fr<12;fr++)for(let ms=1000/60;ms>0;ms-=1000/60){driveFlipper(leftFlip);driveFlipper(rightFlip);Engine.update(engine,Math.min(1000/60,ms));}
-  A(!leftFlip.body.isStatic&&Math.abs(leftFlip.body.angle-leftFlip.rest)>0.4,'a pressed flipper still swings in play');
-  leftFlip.pressed=false;
+  // render pin: even if the physics arm were somehow off rest while not playing, the MESH
+  // must render at rest. Force the body away, run one frame, and check what would be drawn.
+  Body.setAngle(leftFlip.body,leftFlip.rest+0.6);
+  window.__step();
+  A(Math.abs(leftFlipM.rotation.y-(-leftFlip.rest))<1e-6,'idle flipper mesh is pinned to rest in the render');
+
+  // input: arrow keys must do NOTHING until the game is playing.
+  game.state='over';leftFlip.keyHeld=false;leftFlip.hover=false;leftFlip.tap=false;updatePressed(leftFlip);
+  dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft'}));
+  A(!leftFlip.keyHeld&&!leftFlip.pressed,'arrow keys are inert until the game is playing');
+  dispatchEvent(new KeyboardEvent('keyup',{key:'ArrowLeft'}));
+
+  // and play must restore a real swing, driven through the OR'd control state (hover here)
+  setFlipperLive(true);game.state='playing';
+  leftFlip.hover=true;updatePressed(leftFlip);A(leftFlip.pressed,'hover raises a flipper while playing');
+  for(let fr=0;fr<14;fr++)for(let ms=1000/60;ms>0;ms-=1000/60){driveFlipper(leftFlip);driveFlipper(rightFlip);Engine.update(engine,Math.min(1000/60,ms));}
+  A(!leftFlip.body.isStatic&&Math.abs(leftFlip.body.angle-leftFlip.rest)>0.4,'a hovered flipper swings in play');
+  leftFlip.hover=false;updatePressed(leftFlip);
 
   console.log('SELFTEST OK');
 }
