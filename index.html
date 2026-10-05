@@ -1326,10 +1326,12 @@ if(dnEl)dnEl.addEventListener('click',()=>{skyTarget=skyTarget<0.5?1:0;dnEl.clas
 /* AI-generated music props (assets/props/*.glb) — missing file = silently skipped */
 const PROP_LIST=[
   // [file, parent, x, y, z, targetSize, rotY, rotX]
-  ['mic',       deskRG,  .15, TOP, -.42, .34,  0.2, 0],
-  ['speaker',   deskRG, -1.15,TOP, -.35, .38,  0.5, 0],
-  ['speaker',   deskRG,  1.15,TOP, -.35, .38, -0.5, 0],   // mirrored on the right edge
-  ['headphones',deskRG, -.75, TOP,  .3,  .28,  0.9, 0],
+  // music gear lives on the LEFT desk with the MPCs: studio monitors flank the row, mic and
+  // headphones sit up front. The right desk is now a clean computer workstation.
+  ['speaker',   deskLG, -1.16,TOP, -.06, .38,  0.6, 0],   // left studio monitor, flanking the MPC row
+  ['speaker',   deskLG,  1.16,TOP, -.06, .38, -0.6, 0],   // right studio monitor, mirrored
+  ['mic',       deskLG,  .66, TOP,  .40, .34,  0.2, 0],   // mic up front, right of the lava lamp
+  ['headphones',deskLG, -.42, TOP,  .42, .28,  0.9, 0],   // headphones resting front-center
   // the MPC lineup — three playable machines in a row across the back of the left desk
   ['mpc-runaway',deskLG,-.78, TOP, -.38, .54, 0.1, 0],   // cream — RUNAWAY
   ['mpc-power',  deskLG,-.10, TOP, -.38, .54, 0.0, 0],   // red — POWER
