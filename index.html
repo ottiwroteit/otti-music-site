@@ -328,7 +328,7 @@ frameCamera();
 const CAMS={
   wide: {pos:[0.3,3.4,5.15], look:[0,0.22,-0.42], fov:47, ppos:[0,3.55,5.7], plook:[0,0.46,-0.42], pfov:63},
   table:{pos:[0.15,3.0,3.15],look:[0,0.0,-0.3], fov:46, ppos:[0,3.25,3.5],plook:[0,-0.05,-0.3],pfov:60},
-  arcade:{pos:[-4.0,2.7,6.9], look:[-11.2,0.45,0.0], fov:54, ppos:[-3.8,3.0,8.6], plook:[-11.0,0.4,-0.4], pfov:72}, // warehouse wing, left of the studio
+  arcade:{pos:[-4.0,2.7,6.9], look:[-11.2,0.45,0.0], fov:54, ppos:[-3.2,2.3,12.0], plook:[-11.0,0.55,-0.6], pfov:66}, // warehouse wing, left of the studio
 };
 let camState='wide';
 const camCur={pos:new THREE.Vector3(),look:new THREE.Vector3(),fov:46};
@@ -374,6 +374,7 @@ const arcchip=document.getElementById('arcchip');
 const screenframe=document.getElementById('screenframe');
 const mpcframe=document.getElementById('mpcframe');
 const arcframe=document.getElementById('arcframe');
+arcframe.addEventListener('load',()=>{ if(camState==='arc')try{arcframe.contentWindow.focus();}catch(_){} }); // keys go to the game, not the scene
 // Each cabinet's game lives on its owner's site (see CAB_DEFS in the arcade wing).
 function arcSrcFor(game){
   const u=arcUnits.find(x=>x.game===game);
@@ -1137,7 +1138,9 @@ const arcUnits=[]; let curArc=null;
   // fired after page load (or on first visit to the wing, whichever is first) so the
   // studio's own assets win the bandwidth race
   const cabQueue=[];let cabsStarted=false;
-  function startCabs(){ if(cabsStarted)return; cabsStarted=true; cabQueue.forEach(f=>f()); }
+  function startCabs(){ if(cabsStarted)return; cabsStarted=true;
+    // the marquee titles are drawn in Bungee: never bake the fallback font into a texture
+    document.fonts.load('48px Bungee').catch(()=>{}).then(()=>cabQueue.forEach(f=>f())); }
   window.__startCabs=startCabs;
   function buildCab(def,x,z,ry){
     const [game,title,url,color,yaw=0]=def;
@@ -1154,17 +1157,18 @@ const arcUnits=[]; let curArc=null;
       bb.setFromObject(o);
       o.position.set(-(bb.min.x+bb.max.x)/2,-bb.min.y,-(bb.min.z+bb.max.z)/2); // center, then ground
       grp.add(o);grp.updateMatrixWorld(true);
+      const halfW=(bb.max.x-bb.min.x)/2;          // extent after centering (bb itself is pre-centering)
       // find the marquee box by raycasting the mesh from the front: the frontmost band near
       // the top is the lit panel; its x/y extent sizes the title strip
       const dir=new THREE.Vector3(0,0,-1).transformDirection(grp.matrixWorld);
       const zAt=(x,y)=>{_mRay.set(new THREE.Vector3(x,y,3).applyMatrix4(grp.matrixWorld),dir);
         const h=_mRay.intersectObject(o,true)[0];return h?grp.worldToLocal(h.point.clone()).z:-9;};
       const my0=CAB_H-0.11, xs=[];
-      for(let i=0;i<=24;i++)xs.push(bb.min.x+(bb.max.x-bb.min.x)*i/24);
+      for(let i=0;i<=16;i++)xs.push(-halfW+2*halfW*i/16);   // ~26 rays per cabinet in total
       const zs=xs.map(x=>zAt(x,my0)), zMax=Math.max(...zs);
       const front=xs.filter((x,i)=>zs[i]>zMax-0.04);
       const x0=Math.min(...front), x1=Math.max(...front), cx=(x0+x1)/2;
-      const ys=[];for(let i=0;i<=16;i++)ys.push(CAB_H-0.4+0.4*i/16);
+      const ys=[];for(let i=0;i<=8;i++)ys.push(CAB_H-0.4+0.4*i/8);
       const band=ys.filter(y=>zAt(cx,y)>zMax-0.04);
       const y0=band.length?Math.min(...band):my0-0.08, y1=band.length?Math.max(...band):my0+0.08;
       const w=(x1-x0)*0.92, h=Math.min((y1-y0)*0.86,w/3);
@@ -1185,7 +1189,7 @@ const arcUnits=[]; let curArc=null;
   const gap=1.02;
   CAB_DEFS.slice(0,8).forEach((def,i)=>buildCab(def,AX-4.95+i*gap,AZ-3.7,0));
   CAB_DEFS.slice(8).forEach((def,i)=>buildCab(def,AX-5.25,AZ-2.65+i*0.96,Math.PI/2));
-  addEventListener('load',()=>setTimeout(startCabs,1500));
+  addEventListener('load',()=>setTimeout(()=>(window.requestIdleCallback||setTimeout)(startCabs),6000));
   window._arcUnits=arcUnits;
   window._arcProj=i=>{const u=arcUnits[i],v=new THREE.Vector3();u.face.getWorldPosition(v);v.project(camera);
     return {x:(v.x+1)/2*innerWidth,y:(1-v.y)/2*innerHeight,game:u.game,behind:v.z>1};}; // test hook: screen coords of a cabinet's face
