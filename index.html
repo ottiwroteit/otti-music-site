@@ -1254,7 +1254,7 @@ const lounge={};
   put(new THREE.PlaneGeometry(FB.w,FB.d),soot,0,top,rz+FB.d/2).rotation.x=Math.PI/2;
   put(new THREE.PlaneGeometry(FB.w,FB.d),soot,0,FB.y0,rz+FB.d/2).rotation.x=-Math.PI/2;
   const fireVid=document.createElement('video');
-  Object.assign(fireVid,{src:'assets/fire/fire-loop.mp4',loop:true,muted:true,playsInline:true,preload:'auto'});   // the loop plays it only while the wall is on screen
+  Object.assign(fireVid,{src:'assets/fire/fire-loop.mp4',loop:true,muted:true,playsInline:true,preload:'none'});   // fetched on first play, i.e. the first time the wall is on screen
   fireVid.style.cssText='position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none'; // in the DOM: detached videos don't decode
   document.body.appendChild(fireVid);
   // play() can be refused without a gesture (iOS Low Power): retry on every gesture until it has played once, like kickCRT
