@@ -60,7 +60,7 @@
     border:1px solid rgba(255,255,255,.25);border-radius:999px;padding:8px 16px;cursor:pointer;
     backdrop-filter:blur(4px);letter-spacing:.04em}
   #backchip.show{display:block}
-  body.in-arc #backchip{bottom:12px}   /* in a game the chip sits under the panel, never over it */
+  body.in-arc #backchip,body.in-lounge #backchip{bottom:12px}   /* never over a game panel or the fire */
   #backchip kbd{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:4px;padding:0 5px}
   /* live web app on the earth-horizon monitor — positioned over its projected screen rect */
   #screenframe,#mpcframe,#arcframe{position:fixed;z-index:9;border:0;background:#000;opacity:0;pointer-events:none;
@@ -74,6 +74,13 @@
     border:1px solid rgba(102,183,255,.45);border-radius:999px;padding:9px 15px;cursor:pointer;
     backdrop-filter:blur(4px);letter-spacing:.06em;box-shadow:0 0 18px rgba(102,183,255,.25)}
   #arcchip.show{display:block}
+  #loungechip{position:fixed;right:18px;top:100px;z-index:11;display:none;   /* top-right, under the day/night switch */
+    font-family:var(--mono);font-size:12px;color:#ffe7d6;background:rgba(14,8,6,.75);
+    border:1px solid rgba(255,140,60,.5);border-radius:999px;padding:9px 15px;cursor:pointer;
+    backdrop-filter:blur(4px);letter-spacing:.06em;box-shadow:0 0 18px rgba(255,120,40,.25)}
+  #loungechip.show{display:block}
+  #fireframe{position:fixed;z-index:8;border:0;background:#070504;opacity:0;pointer-events:none;transition:opacity .4s ease}
+  #fireframe.show{opacity:1}
   @media (max-width:520px){ .livepill{font-size:9px;padding:5px 9px;gap:5px} .livepill .brand{font-size:10px} }
 </style>
 </head>
@@ -91,6 +98,8 @@
 <iframe id="mpcframe" title="OTTI MPC2000XL" loading="lazy" allow="autoplay"></iframe>
 <iframe id="arcframe" title="MSL ARCADE" loading="lazy" allow="autoplay; fullscreen; gamepad; cross-origin-isolated; screen-wake-lock; xr-spatial-tracking"></iframe>
 <button id="arcchip">&#9664; ARCADE</button>
+<button id="loungechip">LOUNGE &#9654;</button>
+<iframe id="fireframe" title="Fireplace" tabindex="-1" aria-hidden="true"></iframe>
 <div class="hint">hover a flipper or <kbd>&larr;</kbd><kbd>&rarr;</kbd> · <kbd>Space</kbd> launch · mobile: tap sides</div>
 
 <script>
@@ -328,12 +337,13 @@ frameCamera();
 const CAMS={
   wide: {pos:[0.3,3.4,5.15], look:[0,0.22,-0.42], fov:47, ppos:[0,3.55,5.7], plook:[0,0.46,-0.42], pfov:63},
   table:{pos:[0.15,3.0,3.15],look:[0,0.0,-0.3], fov:46, ppos:[0,3.25,3.5],plook:[0,-0.05,-0.3],pfov:60},
+  lounge:{pos:[4.25,0.55,1.2], look:[10.2,0.3,1.2], fov:50, ppos:[2.6,0.7,1.2], plook:[10.2,0.4,1.2], pfov:66}, // the fireplace wall, right of the TV desk
   arcade:{pos:[-3.6,2.8,7.4], look:[-10.6,0.45,-0.3], fov:56, ppos:[-3.0,2.4,13.0], plook:[-10.0,0.55,-0.8], pfov:68}, // warehouse wing, left of the studio
 };
 let camState='wide';
 const camCur={pos:new THREE.Vector3(),look:new THREE.Vector3(),fov:46};
 const _gw=new THREE.Vector3();
-const _sq=new THREE.Quaternion(),_sn=new THREE.Vector3();
+const _sq=new THREE.Quaternion(),_sn=new THREE.Vector3(),_lfr=new THREE.Frustum(),_lm=new THREE.Matrix4();
 function camTarget(){
   const portrait=innerHeight>innerWidth;
   if(camState==='globe'){
@@ -374,13 +384,17 @@ const arcchip=document.getElementById('arcchip');
 const screenframe=document.getElementById('screenframe');
 const mpcframe=document.getElementById('mpcframe');
 const arcframe=document.getElementById('arcframe');
+const loungechip=document.getElementById('loungechip');
+const fireframe=document.getElementById('fireframe');
+let HAS_WEBGPU=!!navigator.gpu;   // live Fire Pro needs WebGPU; everyone else sees the recorded loop in the firebox
+if(HAS_WEBGPU)navigator.gpu.requestAdapter().then(a=>{if(!a)HAS_WEBGPU=false;},()=>{HAS_WEBGPU=false;});   // API present but no usable GPU: don't fetch the fire page
 arcframe.addEventListener('load',()=>{ if(camState==='arc')try{arcframe.contentWindow.focus();}catch(_){} }); // keys go to the game, not the scene
 // Each cabinet's game lives on its owner's site (see CAB_DEFS in the arcade wing).
 function arcSrcFor(game){
   const u=arcUnits.find(x=>x.game===game);
   return u?u.url:'about:blank';
 }
-const focusStates=['globe','screen','mpc','arc'];
+const focusStates=['globe','screen','mpc','arc','lounge'];
 window.__mpcExit=()=>setCam('wide');    // the MPC app calls this on ESC
 function backTarget(){return camState==='globe'?'table':camState==='arc'?'arcade':'wide';}
 function setCam(s){
@@ -390,9 +404,13 @@ function setCam(s){
   backchip.innerHTML=s==='arc'?'Exit Game':'Go Back <kbd>ESC</kbd>';
   if(s==='arcade'||s==='arc')window.__startCabs&&window.__startCabs();
   arcchip.classList.toggle('show',s==='wide'||s==='table');
-  window.__inScreen=(s==='screen'||s==='mpc'||s==='arc'||s==='arcade'); // pinball input guard (classic script reads this)
-  document.body.classList.toggle('in-screen',s==='screen'||s==='mpc'||s==='arc'||s==='arcade');
+  loungechip.classList.toggle('show',s==='wide'||s==='table');
+  window.__inScreen=(s==='screen'||s==='mpc'||s==='arc'||s==='arcade'||s==='lounge'); // pinball input guard (classic script reads this)
+  document.body.classList.toggle('in-screen',s==='screen'||s==='mpc'||s==='arc'||s==='arcade'||s==='lounge');
+  if(s!=='lounge'){ fireframe.classList.remove('show');   // the live fire is GPU heavy: unload it whenever it's off screen
+    if(fireframe.getAttribute('src')&&fireframe.getAttribute('src')!=='about:blank')fireframe.src='about:blank'; }
   document.body.classList.toggle('in-arc',s==='arc');
+  document.body.classList.toggle('in-lounge',s==='lounge');
   if(s==='screen'){ if(!screenframe.src)screenframe.src='assets/y2k-os/index.html'; }
   else screenframe.classList.remove('show');
   if(s==='mpc'){
@@ -422,6 +440,7 @@ function setCam(s){
 }
 backchip.addEventListener('click',()=>setCam(backTarget()));
 arcchip.addEventListener('click',()=>setCam('arcade'));
+loungechip.addEventListener('click',()=>setCam('lounge'));
 window._setCam=setCam;
 addEventListener('keydown',e=>{if(e.key==='Escape'&&(focusStates.includes(camState)||camState==='arcade'))setCam(backTarget());});
 const CAM_ORDER=['wide','table','globe'];
@@ -430,13 +449,14 @@ addEventListener('wheel',e=>{
   const now=performance.now(); if(now-wheelLock<700)return; wheelLock=now;
   if(camState==='screen'||camState==='mpc'){setCam('wide');return;}   // wheel backs out of a focus
   if(camState==='arc'){setCam('arcade');return;}
-  if(camState==='arcade'){setCam('wide');return;}
+  if(camState==='arcade'||camState==='lounge'){setCam('wide');return;}
   const i=CAM_ORDER.indexOf(camState);
   if(e.deltaY>0&&i<2)setCam(CAM_ORDER[i+1]);
   else if(e.deltaY<0&&i>0)setCam(CAM_ORDER[i-1]);
 },{passive:true});
 {const t0=camTarget();camCur.pos.copy(t0.pos);camCur.look.copy(t0.look);camCur.fov=t0.fov;}
 arcchip.classList.add('show');   // visible from the initial wide view
+loungechip.classList.add('show');
 
 /* lights — base scene must read with bloom off */
 scene.add(new THREE.AmbientLight(0x30204a,1.0)); // env map carries fill now
@@ -1197,6 +1217,175 @@ const arcUnits=[]; let curArc=null;
   window._arcSelect=i=>{curArc=arcUnits[i];setCam('arc');}; // test hook: enter a cabinet like a click would
 }
 
+/* ================================================================
+   LOUNGE — a wall turned 90deg right of the TV desk: a Fire Pro
+   fireplace and a wall-mounted TV running the MSL guide channel.
+   ================================================================ */
+const LX=10.2, LZ=1.2, LFLOOR=-1.6;             // wall plane x, fireplace centre z
+const FB={w:1.5, h:1.36, y0:0.14, d:0.34};       // firebox opening (w/h matches the Fire Pro page) + recess depth
+const BREAST={w:3.0, d:0.38};                    // brick chimney breast proud of the wall
+const lounge={};
+{
+  const g=new THREE.Group();g.position.set(LX,LFLOOR,LZ);g.rotation.y=-Math.PI/2;scene.add(g); // local +z faces into the room
+  const put=(geo,mat,x,y,z)=>{const m=new THREE.Mesh(geo,mat);m.position.set(x,y,z);g.add(m);return m;};
+  // wall: deep plum plaster, from the back wall forward
+  put(new THREE.PlaneGeometry(8.6,7.2),new THREE.MeshStandardMaterial({color:0x1b1222,roughness:.92}),LZ-0.9,3.6,0);
+  // brick for the chimney breast
+  const [bc,bx]=makeCanvas(512,512);
+  bx.fillStyle='#2a1a16';bx.fillRect(0,0,512,512);                       // mortar
+  for(let r=0;r<16;r++)for(let c=-1;c<5;c++){
+    const off=r%2?64:0, x=c*128+off+3, y=r*32+3, h=(Math.sin(r*7.3+c*3.1)*.5+.5);
+    bx.fillStyle=`hsl(${10+h*12},${26+h*14}%,${13+h*9}%)`;bx.fillRect(x,y,122,26);
+    bx.fillStyle='rgba(0,0,0,.18)';bx.fillRect(x,y+20,122,6);}
+  const brickTex=ctex(bc);brickTex.wrapS=brickTex.wrapT=THREE.RepeatWrapping;brickTex.repeat.set(1.6,3.6);
+  const brickM=new THREE.MeshStandardMaterial({map:brickTex,roughness:.88});
+  const H=7.2, fz=BREAST.d;                      // breast front face at local z = BREAST.d
+  const pierW=(BREAST.w-FB.w)/2, top=FB.y0+FB.h;
+  put(new THREE.BoxGeometry(pierW,H,BREAST.d),brickM,-(FB.w+pierW)/2,H/2,BREAST.d/2);   // left pier
+  put(new THREE.BoxGeometry(pierW,H,BREAST.d),brickM, (FB.w+pierW)/2,H/2,BREAST.d/2);   // right pier
+  put(new THREE.BoxGeometry(FB.w,H-top,BREAST.d),brickM,0,top+(H-top)/2,BREAST.d/2);     // above the opening
+  put(new THREE.BoxGeometry(FB.w,FB.y0,BREAST.d),brickM,0,FB.y0/2,BREAST.d/2);           // below it
+  // firebox recess: soot walls, and the recorded Fire Pro loop as its back (all browsers, any angle)
+  const soot=new THREE.MeshStandardMaterial({color:0x140c09,roughness:1});
+  const rz=fz-FB.d;
+  const side=new THREE.PlaneGeometry(FB.d,FB.h);
+  put(side,soot,-FB.w/2,FB.y0+FB.h/2,rz+FB.d/2).rotation.y=Math.PI/2;
+  put(side,soot, FB.w/2,FB.y0+FB.h/2,rz+FB.d/2).rotation.y=-Math.PI/2;
+  put(new THREE.PlaneGeometry(FB.w,FB.d),soot,0,top,rz+FB.d/2).rotation.x=Math.PI/2;
+  put(new THREE.PlaneGeometry(FB.w,FB.d),soot,0,FB.y0,rz+FB.d/2).rotation.x=-Math.PI/2;
+  const fireVid=document.createElement('video');
+  Object.assign(fireVid,{src:'assets/fire/fire-loop.mp4',loop:true,muted:true,playsInline:true,preload:'auto'});   // the loop plays it only while the wall is on screen
+  fireVid.style.cssText='position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none'; // in the DOM: detached videos don't decode
+  document.body.appendChild(fireVid);
+  // play() can be refused without a gesture (iOS Low Power): retry on every gesture until it has played once, like kickCRT
+  const kickFire=()=>{ if(lounge._vid&&fireVid.paused)fireVid.play().then(()=>['pointerdown','keydown','touchstart'].forEach(e=>removeEventListener(e,kickFire))).catch(()=>{}); };
+  ['pointerdown','keydown','touchstart'].forEach(e=>addEventListener(e,kickFire));
+  const fireTex=new THREE.VideoTexture(fireVid);fireTex.colorSpace=THREE.SRGBColorSpace;
+  const fireM=new THREE.MeshBasicMaterial({map:fireTex,toneMapped:false});fireM.color.setScalar(.85);
+  put(new THREE.PlaneGeometry(FB.w,FB.h),fireM,0,FB.y0+FB.h/2,rz+0.002);
+  // hearth slab + mantel shelf
+  const stone=new THREE.MeshStandardMaterial({color:0x2c2622,roughness:.7,metalness:.05});
+  put(new THREE.BoxGeometry(BREAST.w+0.5,0.1,0.75),stone,0,0.05,fz+0.75/2-0.05);
+  const mantelM=new THREE.MeshStandardMaterial({color:0x3a2416,roughness:.55});
+  put(new THREE.BoxGeometry(BREAST.w+0.4,0.15,0.34),mantelM,0,top+0.42,fz+0.17);
+  // flame light on the room, flickered in the loop
+  const fireL=new THREE.PointLight(0xff7a2e,9,9,1.6);fireL.position.set(0,FB.y0+0.6,fz+0.9);g.add(fireL);
+  // wall-mounted TV above the mantel
+  const tvW=2.2, tvH=tvW*9/16, tvY=top+0.42+0.3+tvH/2+0.15;
+  put(new THREE.BoxGeometry(0.5,0.3,0.06),new THREE.MeshStandardMaterial({color:0x111114,metalness:.6,roughness:.4}),0,tvY,fz+0.03); // wall bracket
+  put(new THREE.BoxGeometry(tvW+0.06,tvH+0.06,0.07),new THREE.MeshStandardMaterial({color:0x08080a,roughness:.35,metalness:.2}),0,tvY,fz+0.1);
+  const guide=makeGuide();
+  const scr=put(new THREE.PlaneGeometry(tvW,tvH),new THREE.MeshBasicMaterial({map:guide.tex,toneMapped:false}),0,tvY,fz+0.136);
+  scr.material.color.setScalar(.82);
+  const tvGlow=new THREE.PointLight(0x4a64ff,2.2,4,1.8);tvGlow.position.set(0,tvY,fz+0.8);g.add(tvGlow);
+  // corners of the opening (local) for gluing the live fire overlay to the screen
+  g.updateMatrixWorld(true);
+  lounge.corners=[[-FB.w/2,FB.y0,fz],[FB.w/2,FB.y0,fz],[-FB.w/2,top,fz],[FB.w/2,top,fz]].map(p=>new THREE.Vector3(...p).applyMatrix4(g.matrixWorld));
+  lounge.sphere=new THREE.Sphere(new THREE.Vector3(0,1.6,fz).applyMatrix4(g.matrixWorld),4);   // wall + TV + glow, for the on-screen test
+  Object.assign(lounge,{group:g,fireL,fireVid,guide,screen:scr});
+  window._lounge=lounge;
+}
+
+/* MSL guide channel: a Prevue-style guide drawn on a canvas. Everything shown comes from
+   GUIDE, so MSL's real channels, shows and videos replace these placeholders without code. */
+function makeGuide(){
+  const GUIDE={
+    promo:['THE MSL','NETWORK','NEVER','STOPS'],
+    channels:[ // [number, call letters, [[title, half-hour slots, flags]...]]  flags: L = started earlier, R = runs past 10:00, cc, red = premium row
+      [1,'MSL',  [['Make Sense Later Live',3,'R']]],
+      [2,'OTTI', [['Studio Session',1,'L'],['Beat Tape Hour',2,'cc']]],
+      [3,'LOOP', [['Sample Flip',1,''],['Crate Diggers',1,'cc'],['Loop Lab',1,'R']]],
+      [4,'VIBE', [['Late Night Vibes',2,'L'],['Slow Jams',1,'']]],
+      [5,'MPC',  [['Pad Masters',1,''],['Drum Rack Live',2,'cc R']]],
+      [6,'TAPE', [['Mixtape Theater',3,'L R']]],
+      [7,'NITE', [['After Hours',1,'L'],['Night Drive',1,''],['Neon City',1,'cc']]],
+      [8,'ARCD', [['High Score',1,''],['Insert Coin',1,''],['Final Round',1,'R']]],
+      [9,'HITS', [['Top Ten Countdown',2,'cc'],['Request Line',1,'']]],
+      [10,'LOFI',[['Study Beats',3,'L R']]],
+      [11,'CRTV',[['Vintage Videos',1,''],['VHS Vault',2,'cc']]],
+      [12,'MSL2',[['Behind the Beat',1,'red'],['Session Tapes',1,'red'],['Dub Plates',1,'red R']]],
+      [13,'RUSH',[['Morning Rush',2,'L'],['Studio Update',1,'']]],
+      [14,'WAVE',[['Synth Wave',1,''],['Tape Delay',1,'cc'],['Analog Dreams',1,'']]],
+      [15,'LIVE',[['Live From the Lounge',3,'R']]],
+      [16,'FLIP',[['Flip Side',1,'L'],['B Sides',1,''],['Deep Cuts',1,'cc']]],
+    ],
+  };
+  const W=1280,H=720, CX=160, CW=960;            // 4:3 picture pillarboxed on the 16:9 panel
+  const PIP_W=528, TOPH=372, BARH=48, ROWH=96, CH=210, SLOT=250, GAP=4;   // CH + 3 slots fill the 960px picture
+  const [c,x]=makeCanvas(W,H);
+  const tex=ctex(c);
+  // promo backdrop: blue marble, drawn once
+  const [mc,mx2]=makeCanvas(CW-PIP_W,TOPH);
+  const mg=mx2.createLinearGradient(0,0,CW-PIP_W,TOPH);mg.addColorStop(0,'#3f4fe0');mg.addColorStop(1,'#2a35c4');
+  mx2.fillStyle=mg;mx2.fillRect(0,0,CW-PIP_W,TOPH);
+  for(let i=0;i<2600;i++){const a=Math.random()*.16;mx2.fillStyle=`rgba(${Math.random()<.5?'255,255,255':'10,14,90'},${a})`;
+    mx2.fillRect(Math.random()*(CW-PIP_W),Math.random()*TOPH,2+Math.random()*7,1+Math.random()*3);}
+  // channel rows, drawn once into a strip that scrolls forever
+  const rows=GUIDE.channels, [sc,sx]=makeCanvas(CW,ROWH*rows.length);
+  const cell=(g,x0,y0,w,h,fill)=>{g.fillStyle=fill;g.fillRect(x0,y0,w,h);
+    g.fillStyle='rgba(150,165,255,.75)';g.fillRect(x0,y0,w,3);g.fillRect(x0,y0,3,h);
+    g.fillStyle='rgba(0,0,40,.8)';g.fillRect(x0,y0+h-3,w,3);g.fillRect(x0+w-3,y0,3,h);};
+  const text=(g,s,x0,y0,size,col)=>{g.font=`${size}px Anton, 'Arial Narrow', sans-serif`;g.textBaseline='top';
+    g.fillStyle='rgba(0,0,30,.85)';g.fillText(s,x0+2,y0+2);g.fillStyle=col;g.fillText(s,x0,y0);};
+  const wrap=(g,s,maxW,size)=>{g.font=`${size}px Anton, 'Arial Narrow', sans-serif`;const out=[];let line='';
+    for(const w of s.split(' ')){const t=line?line+' '+w:w;if(g.measureText(t).width>maxW&&line){out.push(line);line=w;}else line=t;}
+    if(line)out.push(line);return out.slice(0,2);};
+  function drawStrip(){
+    sx.fillStyle='#07093a';sx.fillRect(0,0,CW,sc.height);
+    rows.forEach(([num,call,progs],r)=>{
+      const y0=r*ROWH+GAP/2, h=ROWH-GAP, red=progs.some(p=>/red/.test(p[2]));
+      cell(sx,0,y0,CH-GAP,h,'#1e22a8');
+      sx.font="34px Anton, 'Arial Narrow', sans-serif";
+      text(sx,String(num),CH/2-sx.measureText(String(num)).width/2,y0+8,34,'#ffffff');
+      text(sx,call,CH/2-sx.measureText(call).width/2,y0+46,34,'#f2e84a');
+      let px=CH;
+      for(const [title,span,flags] of progs){
+        const w=span*SLOT-GAP;cell(sx,px,y0,w,h,red?'#b0141e':'#1e22a8');
+        let tx=px+14;
+        if(/L/.test(flags)){text(sx,'«',px+6,y0+18,44,'#c8ccff');tx+=26;}
+        if(/R/.test(flags))text(sx,'»',px+w-30,y0+18,44,'#c8ccff');
+        wrap(sx,title,w-(tx-px)-36,32).forEach((l,i)=>text(sx,l,tx,y0+8+i*38,32,'#ffffff'));
+        if(/cc/.test(flags)){sx.font="18px 'DM Mono', monospace";sx.strokeStyle='#fff';sx.lineWidth=2;
+          const cx0=px+w-(/R/.test(flags)?84:54);sx.strokeRect(cx0,y0+h-30,30,20);text(sx,'cc',cx0+5,y0+h-29,16,'#fff');}
+        px+=span*SLOT;
+      }
+    });
+  }
+  const scan=(()=>{const [k,kx]=makeCanvas(W,H);kx.fillStyle='rgba(0,0,0,.16)';for(let y=0;y<H;y+=3)kx.fillRect(0,y,W,1);return k;})();
+  const pad=n=>String(n).padStart(2,'0');
+  const hm=d=>{let h=d.getHours()%12||12;return `${h}:${pad(d.getMinutes())} ${d.getHours()<12?'AM':'PM'}`;};
+  let ready=false; document.fonts.load("34px Anton").catch(()=>{}).then(()=>{drawStrip();ready=true;});
+  function draw(t){
+    if(!ready)return;
+    x.fillStyle='#000';x.fillRect(0,0,W,H);
+    x.save();x.translate(CX,0);
+    // PIP: placeholder is the studio's VHS clip until MSL's own videos are delivered
+    x.fillStyle='#05060f';x.fillRect(0,0,PIP_W,TOPH);
+    if(crtVideo.readyState>=2){const vw=crtVideo.videoWidth,vh=crtVideo.videoHeight,s=Math.max(PIP_W/vw,TOPH/vh);
+      x.drawImage(crtVideo,(PIP_W-vw*s)/2,(TOPH-vh*s)/2,vw*s,vh*s);}
+    x.drawImage(mc,PIP_W,0);
+    GUIDE.promo.forEach((l,i)=>{x.font="60px Anton, 'Arial Narrow', sans-serif";const w=x.measureText(l).width;
+      text(x,l,PIP_W+(CW-PIP_W-w)/2,26+i*84,60,'#ffffff');});
+    // time bar: live clock + the current half hour and the next two
+    const now=new Date(), s0=new Date(now);s0.setMinutes(now.getMinutes()<30?0:30,0,0);
+    x.fillStyle='#07093a';x.fillRect(0,TOPH,CW,BARH);
+    cell(x,0,TOPH+2,CH-GAP,BARH-4,'#2b31c4');
+    const clk=`${now.getHours()%12||12}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+    x.font="34px Anton, 'Arial Narrow', sans-serif";text(x,clk,(CH-x.measureText(clk).width)/2,TOPH+4,34,'#ffffff');
+    for(let i=0;i<3;i++){const sl=hm(new Date(s0.getTime()+i*1800e3));cell(x,CH+i*SLOT,TOPH+2,SLOT-GAP,BARH-4,'#2b31c4');
+      text(x,sl,CH+i*SLOT+(SLOT-x.measureText(sl).width)/2,TOPH+4,34,'#f2e84a');}
+    // the grid rolls up about one row every three seconds and never stops
+    const gy=TOPH+BARH, gh=H-gy, off=((t*ROWH/3)%sc.height+sc.height)%sc.height;
+    x.save();x.beginPath();x.rect(0,gy,CW,gh);x.clip();
+    for(let y=-off;y<gh;y+=sc.height)x.drawImage(sc,0,gy+y);
+    x.restore();
+    x.restore();
+    x.drawImage(scan,0,0);
+    tex.needsUpdate=true;
+  }
+  return {tex,draw,data:GUIDE};
+}
+
 /* ---- workstations: grounded desks with legs (nothing floats) ---- */
 const deskM=new THREE.MeshStandardMaterial({color:0x14101e,roughness:.7});
 const legM2=new THREE.MeshStandardMaterial({color:0x0b0812,roughness:.6,metalness:.3});
@@ -1597,7 +1786,7 @@ function loopBody(){
   window._ck=ck; window._camCur=camCur; window._ct=ct;
   camCur.pos.lerp(ct.pos,ck); camCur.look.lerp(ct.look,ck);
   camCur.fov+=(ct.fov-camCur.fov)*ck;
-  const ft=clock3.elapsedTime, pk=camState==='globe'?0.15:1;
+  const ft=clock3.elapsedTime, pk=(camState==='globe'||camState==='lounge')?0.15:1;   // lounge: keep the live fire overlay square on the opening
   camera.position.set(
     camCur.pos.x+Math.sin(ft*0.4)*0.06+mx*0.5*pk,
     camCur.pos.y+Math.sin(ft*0.27)*0.05-my*0.4*pk,
@@ -1630,6 +1819,32 @@ function loopBody(){
     st.left=Math.round((innerWidth-w)/2)+'px'; st.top=Math.round((innerHeight-h)/2)+'px';
     st.width=Math.round(w)+'px'; st.height=Math.round(h)+'px';
     if(camCur.pos.distanceTo(ct.pos)<0.3)mpcframe.classList.add('show');
+  }
+
+  // Lounge: everything on that wall only runs while the wall is on screen. The guide redraws
+  // smoothly when it's the view, a few times a second otherwise; the fire light flickers; the
+  // recorded loop plays unless the live Fire Pro page is covering it.
+  {const lt=clock3.elapsedTime;
+   camera.updateMatrixWorld();
+   const seen=_lfr.setFromProjectionMatrix(_lm.multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse)).intersectsSphere(lounge.sphere);
+   if(seen&&(camState==='lounge'||lt-(lounge._gt||0)>0.25)){lounge.guide.draw(lt);lounge._gt=lt;}
+   if(seen)lounge.fireL.intensity=8+1.6*Math.sin(lt*11.3)+1.1*Math.sin(lt*7.1+1.3)+0.8*Math.sin(lt*23.7);
+   const vid=seen&&!fireframe.classList.contains('show');
+   if(vid!==lounge._vid){lounge._vid=vid; if(vid)lounge.fireVid.play().catch(()=>{}); else lounge.fireVid.pause();}}
+  if(camState==='lounge'&&HAS_WEBGPU){
+    // the fire page's first second of setup runs on this page's main thread, so start it only
+    // once the camera has landed: a stall at rest instead of a stutter mid-flight
+    const landed=camCur.pos.distanceTo(ct.pos)<0.15;
+    if(landed&&fireframe.getAttribute('src')!=='assets/fire/index.html')fireframe.src='assets/fire/index.html';
+    let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
+    for(const c of lounge.corners){_sn.copy(c).project(camera);
+      const sx=(_sn.x+1)/2*innerWidth, sy=(1-_sn.y)/2*innerHeight;
+      if(sx<minX)minX=sx; if(sx>maxX)maxX=sx; if(sy<minY)minY=sy; if(sy>maxY)maxY=sy;}
+    const st=fireframe.style;
+    st.left=minX+'px'; st.top=minY+'px'; st.width=(maxX-minX)+'px'; st.height=(maxY-minY)+'px';
+    // reveal only once the sim is actually running, so the recorded loop never blinks to black
+    let live=false;try{live=fireframe.contentDocument.body.dataset.state==='running';}catch(_){}
+    if(live&&landed)fireframe.classList.add('show');
   }
 
   // Arcade cabinet: same centered-panel treatment, 16:9 like the game canvas.
@@ -1666,6 +1881,13 @@ if(location.hash==='#selftest'){
   _arcSelect(0);A(arcframe.getAttribute('src')===arcUnits[0].url,'entering a cabinet loads its game');
   setCam('arcade');A(arcframe.getAttribute('src')==='about:blank','leaving a cabinet unloads the game');
   A(!!CAMS.arcade,'arcade cam state');
+  A(!!CAMS.lounge&&!!window._lounge&&_lounge.corners.length===4,'lounge wall built');
+  A(_lounge.guide.data.channels.length>=12&&_lounge.guide.tex.image.width===1280,'guide channel has a lineup');
+  setCam('lounge');A(window.__inScreen&&document.body.classList.contains('in-lounge'),'enter lounge guards pinball input');
+  A(!fireframe.getAttribute('src'),'live fire waits for the camera to land');
+  {const t=camTarget();camCur.pos.copy(t.pos);camCur.look.copy(t.look);} window.__step();
+  A(fireframe.getAttribute('src')===(HAS_WEBGPU?'assets/fire/index.html':null),'live fire loads on landing, only with WebGPU');
+  setCam('wide');A(!fireframe.getAttribute('src')||fireframe.getAttribute('src')==='about:blank','leaving the lounge unloads the live fire');
   setCam('arcade');A(camState==='arcade','enter arcade');
   setCam('wide');A(camState==='wide','exit arcade');
 
