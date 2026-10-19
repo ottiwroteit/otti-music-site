@@ -343,7 +343,7 @@ const CAMS={
 let camState='wide';
 const camCur={pos:new THREE.Vector3(),look:new THREE.Vector3(),fov:46};
 const _gw=new THREE.Vector3();
-const _sq=new THREE.Quaternion(),_sn=new THREE.Vector3();
+const _sq=new THREE.Quaternion(),_sn=new THREE.Vector3(),_lfr=new THREE.Frustum(),_lm=new THREE.Matrix4();
 function camTarget(){
   const portrait=innerHeight>innerWidth;
   if(camState==='globe'){
@@ -386,7 +386,8 @@ const mpcframe=document.getElementById('mpcframe');
 const arcframe=document.getElementById('arcframe');
 const loungechip=document.getElementById('loungechip');
 const fireframe=document.getElementById('fireframe');
-const HAS_WEBGPU=!!navigator.gpu;   // live Fire Pro needs WebGPU; everyone else sees the recorded loop in the firebox
+let HAS_WEBGPU=!!navigator.gpu;   // live Fire Pro needs WebGPU; everyone else sees the recorded loop in the firebox
+if(HAS_WEBGPU)navigator.gpu.requestAdapter().then(a=>{if(!a)HAS_WEBGPU=false;},()=>{HAS_WEBGPU=false;});   // API present but no usable GPU: don't fetch the fire page
 arcframe.addEventListener('load',()=>{ if(camState==='arc')try{arcframe.contentWindow.focus();}catch(_){} }); // keys go to the game, not the scene
 // Each cabinet's game lives on its owner's site (see CAB_DEFS in the arcade wing).
 function arcSrcFor(game){
@@ -1254,10 +1255,12 @@ const lounge={};
   put(new THREE.PlaneGeometry(FB.w,FB.d),soot,0,top,rz+FB.d/2).rotation.x=Math.PI/2;
   put(new THREE.PlaneGeometry(FB.w,FB.d),soot,0,FB.y0,rz+FB.d/2).rotation.x=-Math.PI/2;
   const fireVid=document.createElement('video');
-  Object.assign(fireVid,{src:'assets/fire/fire-loop.mp4',loop:true,muted:true,autoplay:true,playsInline:true,preload:'auto'});
+  Object.assign(fireVid,{src:'assets/fire/fire-loop.mp4',loop:true,muted:true,playsInline:true,preload:'auto'});   // the loop plays it only while the wall is on screen
   fireVid.style.cssText='position:fixed;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none'; // in the DOM: detached videos don't decode
   document.body.appendChild(fireVid);
-  ['pointerdown','keydown','touchstart'].forEach(e=>addEventListener(e,()=>{if(fireVid.paused)fireVid.play().catch(()=>{});},{once:true}));
+  // play() can be refused without a gesture (iOS Low Power): retry on every gesture until it has played once, like kickCRT
+  const kickFire=()=>{ if(lounge._vid&&fireVid.paused)fireVid.play().then(()=>['pointerdown','keydown','touchstart'].forEach(e=>removeEventListener(e,kickFire))).catch(()=>{}); };
+  ['pointerdown','keydown','touchstart'].forEach(e=>addEventListener(e,kickFire));
   const fireTex=new THREE.VideoTexture(fireVid);fireTex.colorSpace=THREE.SRGBColorSpace;
   const fireM=new THREE.MeshBasicMaterial({map:fireTex,toneMapped:false});fireM.color.setScalar(.85);
   put(new THREE.PlaneGeometry(FB.w,FB.h),fireM,0,FB.y0+FB.h/2,rz+0.002);
@@ -1279,7 +1282,8 @@ const lounge={};
   // corners of the opening (local) for gluing the live fire overlay to the screen
   g.updateMatrixWorld(true);
   lounge.corners=[[-FB.w/2,FB.y0,fz],[FB.w/2,FB.y0,fz],[-FB.w/2,top,fz],[FB.w/2,top,fz]].map(p=>new THREE.Vector3(...p).applyMatrix4(g.matrixWorld));
-  Object.assign(lounge,{group:g,fireL,fireVid,guide,screen:scr});
+  lounge.sphere=new THREE.Sphere(new THREE.Vector3(0,1.6,fz).applyMatrix4(g.matrixWorld),4);   // wall + TV + glow, for the on-screen test
+  Object.assign(lounge,{group:g,fireL,tvGlow,fireVid,guide,screen:scr});
   window._lounge=lounge;
 }
 
@@ -1783,7 +1787,7 @@ function loopBody(){
   window._ck=ck; window._camCur=camCur; window._ct=ct;
   camCur.pos.lerp(ct.pos,ck); camCur.look.lerp(ct.look,ck);
   camCur.fov+=(ct.fov-camCur.fov)*ck;
-  const ft=clock3.elapsedTime, pk=camState==='globe'?0.15:1;
+  const ft=clock3.elapsedTime, pk=(camState==='globe'||camState==='lounge')?0.15:1;   // lounge: keep the live fire overlay square on the opening
   camera.position.set(
     camCur.pos.x+Math.sin(ft*0.4)*0.06+mx*0.5*pk,
     camCur.pos.y+Math.sin(ft*0.27)*0.05-my*0.4*pk,
@@ -1818,11 +1822,17 @@ function loopBody(){
     if(camCur.pos.distanceTo(ct.pos)<0.3)mpcframe.classList.add('show');
   }
 
-  // Lounge: the guide channel redraws smoothly when it's the view, a few times a second otherwise;
-  // the fire light flickers; the live Fire Pro page is glued over the firebox opening.
+  // Lounge: everything on that wall only runs while the wall is on screen. The guide redraws
+  // smoothly when it's the view, a few times a second otherwise; the fire light flickers; the
+  // recorded loop plays unless the live Fire Pro page is covering it.
   {const lt=clock3.elapsedTime;
-   if(camState==='lounge'||lt-(lounge._gt||0)>0.25){lounge.guide.draw(lt);lounge._gt=lt;}
-   lounge.fireL.intensity=8+1.6*Math.sin(lt*11.3)+1.1*Math.sin(lt*7.1+1.3)+0.8*Math.sin(lt*23.7);}
+   camera.updateMatrixWorld();
+   const seen=_lfr.setFromProjectionMatrix(_lm.multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse)).intersectsSphere(lounge.sphere);
+   lounge.fireL.visible=lounge.tvGlow.visible=seen;   // off screen the two lights would still shade every lit pixel
+   if(seen&&(camState==='lounge'||lt-(lounge._gt||0)>0.25)){lounge.guide.draw(lt);lounge._gt=lt;}
+   if(seen)lounge.fireL.intensity=8+1.6*Math.sin(lt*11.3)+1.1*Math.sin(lt*7.1+1.3)+0.8*Math.sin(lt*23.7);
+   const vid=seen&&!fireframe.classList.contains('show');
+   if(vid!==lounge._vid){lounge._vid=vid; if(vid)lounge.fireVid.play().catch(()=>{}); else lounge.fireVid.pause();}}
   if(camState==='lounge'&&HAS_WEBGPU){
     let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
     for(const c of lounge.corners){_sn.copy(c).project(camera);
